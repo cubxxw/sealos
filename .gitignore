@@ -16,3 +16,4 @@ tools
 coverage.out
 tmp
 desktop/.DS_Store
+.gitsync.sh
