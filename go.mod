@@ -7,8 +7,8 @@ require (
 	github.com/Masterminds/sprig/v3 v3.2.2
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.985
 	github.com/casdoor/casdoor-go-sdk v0.4.1
-	github.com/containers/buildah v1.26.1
-	github.com/containers/common v0.48.0
+	github.com/containers/buildah v1.27.1
+	github.com/containers/common v0.49.1
 	github.com/containers/image/v5 v5.22.0
 	github.com/containers/ocicrypt v1.1.5
 	github.com/containers/storage v1.42.0
@@ -76,7 +76,7 @@ require (
 	github.com/containerd/cgroups v1.0.3 // indirect
 	github.com/containerd/containerd v1.6.6 // indirect
 	github.com/containerd/stargz-snapshotter/estargz v0.12.0 // indirect
-	github.com/containernetworking/cni v1.1.1 // indirect
+	github.com/containernetworking/cni v1.1.2 // indirect
 	github.com/containernetworking/plugins v1.1.1 // indirect
 	github.com/containers/libtrust v0.0.0-20200511145503-9c3a6c22cd9a // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
@@ -85,11 +85,10 @@ require (
 	github.com/docker/docker-credential-helpers v0.6.4 // indirect
 	github.com/docker/go-connections v0.4.1-0.20210727194412-58542c764a11 // indirect
 	github.com/docker/go-metrics v0.0.1 // indirect
-	github.com/docker/libnetwork v0.8.0-dev.2.0.20190625141545-5a177b73e316 // indirect
 	github.com/docker/libtrust v0.0.0-20160708172513-aabc10ec26b7 // indirect
 	github.com/evanphx/json-patch v4.12.0+incompatible // indirect
 	github.com/fsnotify/fsnotify v1.5.4 // indirect
-	github.com/fsouza/go-dockerclient v1.7.11 // indirect
+	github.com/fsouza/go-dockerclient v1.8.1 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-errors/errors v1.4.2 // indirect
 	github.com/go-logr/logr v1.2.3 // indirect
@@ -114,7 +113,6 @@ require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/huandu/xstrings v1.3.2 // indirect
 	github.com/inconshreveable/mousetrap v1.0.1 // indirect
-	github.com/ishidawataru/sctp v0.0.0-20210226210310-f2269e66cdee // indirect
 	github.com/jinzhu/copier v0.3.5 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
@@ -138,7 +136,7 @@ require (
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/moby/ipvs v1.0.2 // indirect
 	github.com/moby/locker v1.0.1 // indirect
-	github.com/moby/sys/mount v0.2.0 // indirect
+	github.com/moby/sys/mount v0.3.3 // indirect
 	github.com/moby/sys/mountinfo v0.6.2 // indirect
 	github.com/moby/term v0.0.0-20210619224110-3f7ff695adc6 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -148,9 +146,9 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nxadm/tail v1.4.8 // indirect
 	github.com/opencontainers/runc v1.1.3 // indirect
-	github.com/opencontainers/runtime-tools v0.9.0 // indirect
+	github.com/opencontainers/runtime-tools v0.9.1-0.20220714195903-17b3287fafb7 // indirect
 	github.com/opencontainers/selinux v1.10.1 // indirect
-	github.com/openshift/imagebuilder v1.2.4-0.20220502172744-009dbc6cb805 // indirect
+	github.com/openshift/imagebuilder v1.2.4-0.20220711175835-4151e43600df // indirect
 	github.com/ostreedev/ostree-go v0.0.0-20210805093236-719684c64e4f // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
@@ -162,7 +160,7 @@ require (
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.8.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
-	github.com/seccomp/libseccomp-golang v0.9.2-0.20220502022130-f33da4d89646 // indirect
+	github.com/seccomp/libseccomp-golang v0.10.0 // indirect
 	github.com/shopspring/decimal v1.2.0 // indirect
 	github.com/sigstore/sigstore v1.3.1-0.20220629021053-b95fc0d626c1 // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
