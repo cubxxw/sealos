@@ -11,7 +11,7 @@
 # next.js
 /.next/
 /out/
-
+/prisma/**/generated
 # production
 /build
 
@@ -27,7 +27,7 @@ yarn-error.log*
 
 # local env files
 .env*.local
-
+data/*.local
 # vercel
 .vercel
 
@@ -39,3 +39,8 @@ tests/*
 
 .yalc/
 yalc.lock
+
+config.yaml
+.env
+data/config.local.yaml
+#/prisma/region/generated/
