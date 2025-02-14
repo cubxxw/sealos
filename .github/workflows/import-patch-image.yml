@@ -19,41 +19,65 @@ on:
         required: false
         type: boolean
         default: true
+      target_pull:
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   resolve-modules-arch:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        if: ${{ (inputs.target_pull == false) }}
+        uses: actions/checkout@v4
+      - name: Checkout by Pull Request Target
+        uses: actions/checkout@v4
+        if: ${{ (inputs.target_pull == true) }}
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
       - name: Resolve Modules
         id: set-matrix
         run: bash ./scripts/resolve-patch-modules.sh ${{ inputs.arch }} "true"
   resolve-modules:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        if: ${{ (inputs.target_pull == false) }}
+        uses: actions/checkout@v4
+      - name: Checkout by Pull Request Target
+        uses: actions/checkout@v4
+        if: ${{ (inputs.target_pull == true) }}
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
       - name: Resolve Modules
         id: set-matrix
         run: bash ./scripts/resolve-patch-modules.sh ${{ inputs.arch }}
   build:
     needs: [ resolve-modules ]
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix: ${{ fromJson(needs.resolve-modules.outputs.matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        if: ${{ (inputs.target_pull == false) }}
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
+      - name: Checkout by Pull Request Target
+        uses: actions/checkout@v4
+        if: ${{ (inputs.target_pull == true) }}
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
       - name: Setup Golang with cache
-        uses: magnetikonline/action-golang-cache@v3
+        uses: magnetikonline/action-golang-cache@v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -69,21 +93,27 @@ jobs:
         run: |
           make build BINS=${{ matrix.binary }} PLATFORM=linux_${{ matrix.arch }}
       - name: Save Binaries
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary }}-${{ matrix.arch }}
           path: bin/linux_${{ matrix.arch}}/${{ matrix.binary }}
   test:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     if: ${{ (inputs.e2e == true) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        if: ${{ (inputs.target_pull == false) }}
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
+      - name: Checkout by Pull Request Target
+        uses: actions/checkout@v4
+        if: ${{ (inputs.target_pull == true) }}
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
       - name: Setup Golang with cache
-        uses: magnetikonline/action-golang-cache@v3
+        uses: magnetikonline/action-golang-cache@v5
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: Install Dependencies
@@ -93,13 +123,13 @@ jobs:
           go install github.com/onsi/ginkgo/v2/ginkgo
           cd test/e2e && ginkgo build .
       - name: Save E2e Test
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: e2e.test
           path: test/e2e/e2e.test
   docker:
     needs: [ resolve-modules-arch,build ]
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     if: ${{ (inputs.image == true) }}
     services:
       registry:
@@ -110,37 +140,43 @@ jobs:
       matrix: ${{ fromJson(needs.resolve-modules-arch.outputs.matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
-
+        if: ${{ (inputs.target_pull == false) }}
+        uses: actions/checkout@v4
+      - name: Checkout by Pull Request Target
+        uses: actions/checkout@v4
+        if: ${{ (inputs.target_pull == true) }}
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
       - name: Expose git commit data
         uses: rlespinasse/git-commit-data-action@v1
 
       - name: Download lvscare
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: lvscare-${{ matrix.arch }}
           path: docker/lvscare
 
       - name: Download sealctl
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: sealctl-${{ matrix.arch }}
           path: docker/patch
 
       - name: Download image-cri-shim
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: image-cri-shim-${{ matrix.arch }}
           path: docker/patch
 
       - name: Download sealos
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: sealos-${{ matrix.arch }}
           path: docker/sealos
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
         with:
           driver-opts: network=host
 
@@ -151,7 +187,7 @@ jobs:
           chmod a+x docker/lvscare/*
 
       - name: Build and Push lvscare Image
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v6
         with:
           context: docker/lvscare
           file: docker/lvscare/Dockerfile.main
@@ -167,7 +203,7 @@ jobs:
           OWNER: ${{ github.repository_owner }}
 
       - name: Upload Cluster Images
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: patch-image-${{ matrix.arch }}.tar
           path: patch-${{ matrix.arch }}.tar
