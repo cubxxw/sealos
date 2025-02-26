@@ -1,19 +1,25 @@
-import React, { useMemo, useState } from 'react';
-import { Box, Flex, Card, useTheme } from '@chakra-ui/react';
-import { useQuery } from '@tanstack/react-query';
-import { useAppStore } from '@/store/app';
-import { useToast } from '@/hooks/useToast';
+import useDetailDriver from '@/hooks/useDetailDriver';
 import { useLoading } from '@/hooks/useLoading';
-import { useGlobalStore } from '@/store/global';
-import Header from './components/Header';
-import AppBaseInfo from './components/AppBaseInfo';
-import Pods from './components/Pods';
-import dynamic from 'next/dynamic';
+import { useToast } from '@/hooks/useToast';
 import { MOCK_APP_DETAIL } from '@/mock/apps';
+import { useAppStore } from '@/store/app';
+import { useGlobalStore } from '@/store/global';
+import { serviceSideProps } from '@/utils/i18n';
+import { Box, Flex, useTheme } from '@chakra-ui/react';
+import { useQuery } from '@tanstack/react-query';
+import dynamic from 'next/dynamic';
+import React, { useMemo } from 'react';
+import AppBaseInfo from '@/components/app/detail/index/AppBaseInfo';
+import Pods from '@/components/app/detail/index/Pods';
+import DetailLayout from '@/components/layouts/DetailLayout';
+import AdvancedInfo from '@/components/app/detail/index/AdvancedInfo';
 
-const AppMainInfo = dynamic(() => import('./components/AppMainInfo'), { ssr: false });
+const AppMainInfo = dynamic(() => import('@/components/app/detail/index/AppMainInfo'), {
+  ssr: false
+});
 
 const AppDetail = ({ appName }: { appName: string }) => {
+  const { startGuide } = useDetailDriver();
   const theme = useTheme();
   const { toast } = useToast();
   const { Loading } = useLoading();
@@ -23,12 +29,11 @@ const AppDetail = ({ appName }: { appName: string }) => {
     appDetail = MOCK_APP_DETAIL,
     setAppDetail,
     appDetailPods,
-    intervalLoadPods
+    intervalLoadPods,
+    loadDetailMonitorData
   } = useAppStore();
-  const [podsLoaded, setPodsLoaded] = useState(false);
-  const [showSlider, setShowSlider] = useState(false);
 
-  const { refetch } = useQuery(['setAppDetail'], () => setAppDetail(appName), {
+  const { refetch, isSuccess } = useQuery(['setAppDetail'], () => setAppDetail(appName), {
     onError(err) {
       toast({
         title: String(err),
@@ -37,94 +42,56 @@ const AppDetail = ({ appName }: { appName: string }) => {
     }
   });
 
-  // interval get pods metrics
   useQuery(
-    ['intervalLoadPods'],
+    ['loadDetailMonitorData', appName, appDetail?.isPause],
     () => {
       if (appDetail?.isPause) return null;
-      return intervalLoadPods(appName);
+      return loadDetailMonitorData(appName);
     },
     {
       refetchOnMount: true,
-      refetchInterval: 3000,
-      onSettled() {
-        setPodsLoaded(true);
-      }
+      refetchInterval: 2 * 60 * 1000
     }
   );
 
   return (
-    <Flex flexDirection={'column'} height={'100vh'} backgroundColor={'#F7F8FA'} px={9} pb={4}>
-      <Box>
-        <Header
-          appName={appName}
-          appStatus={appDetail?.status}
-          isPause={appDetail?.isPause}
-          refetch={refetch}
-          setShowSlider={setShowSlider}
-          isLargeScreen={isLargeScreen}
-        />
-      </Box>
-      <Flex position={'relative'} flex={'1 0 0'} h={0}>
-        <Box
-          h={'100%'}
-          flex={'0 0 410px'}
-          w={'410px'}
-          mr={4}
-          overflowY={'auto'}
-          zIndex={1}
-          transition={'0.4s'}
-          bg={'white'}
-          border={theme.borders.sm}
-          borderRadius={'md'}
-          {...(isLargeScreen
-            ? {}
-            : {
-                position: 'absolute',
-                left: 0,
-                boxShadow: '7px 4px 12px rgba(165, 172, 185, 0.25)',
-                transform: `translateX(${showSlider ? '0' : '-500'}px)`
-              })}
-        >
-          {appDetail ? <AppBaseInfo app={appDetail} /> : <Loading loading={true} fixed={false} />}
-        </Box>
-        <Flex flexDirection={'column'} h={'100%'} flex={'1 0 0'} w={0}>
-          <Box mb={4} bg={'white'} border={theme.borders.sm} borderRadius={'md'} minH={'257px'}>
+    <DetailLayout appName={appName} key={'detail'}>
+      <Flex
+        flexDirection={'column'}
+        minH={'100%'}
+        flex={'1 0 0'}
+        w={0}
+        overflowY={'auto'}
+        overflowX={'hidden'}
+      >
+        <Flex mb={'6px'} borderRadius={'lg'} flexShrink={0} minH={'257px'} gap={'6px'}>
+          <Box flexShrink={0} w="408px" bg={'white'} borderRadius={'8px'}>
+            <AppBaseInfo app={appDetail} />
+          </Box>
+          <Box flex="1" bg={'white'} borderRadius={'8px'}>
             {appDetail ? <AppMainInfo app={appDetail} /> : <Loading loading={true} fixed={false} />}
           </Box>
-          <Box
-            bg={'white'}
-            border={theme.borders.sm}
-            borderRadius={'md'}
-            flex={'1 0 0'}
-            h={0}
-            overflowY={'auto'}
-          >
-            <Pods pods={appDetailPods} appName={appName} loading={!podsLoaded} />
-          </Box>
         </Flex>
+        <Box bg={'white'} borderRadius={'8px'} mb={'6px'}>
+          <AdvancedInfo app={appDetail} />
+        </Box>
+        <Box bg={'white'} borderRadius={'lg'} flex={1}>
+          <Pods pods={appDetailPods} appName={appName} />
+        </Box>
       </Flex>
-      {/* mask */}
-      {!isLargeScreen && showSlider && (
-        <Box
-          position={'fixed'}
-          top={0}
-          left={0}
-          right={0}
-          bottom={0}
-          onClick={() => setShowSlider(false)}
-        />
-      )}
-    </Flex>
+    </DetailLayout>
   );
 };
 
-export default AppDetail;
-
-export async function getServerSideProps(context: any) {
-  const appName = context.query?.name || '';
+export async function getServerSideProps(content: any) {
+  const appName = content?.query?.name || '';
 
   return {
-    props: { appName }
+    props: {
+      appName,
+      ...(await serviceSideProps(content))
+    }
   };
 }
+
+export default React.memo(AppDetail);

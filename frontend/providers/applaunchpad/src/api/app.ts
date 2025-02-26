@@ -7,12 +7,18 @@ import {
   adaptMetrics,
   adaptEvents
 } from '@/utils/adapt';
-import { obj2Query } from './tools';
+import type { AppPatchPropsType, PodDetailType } from '@/types/app';
+import { MonitorDataResult, MonitorQueryKey } from '@/types/monitor';
+import { LogQueryPayload } from '@/pages/api/log/queryLogs';
+import { PodListQueryPayload } from '@/pages/api/log/queryPodList';
 
 export const postDeployApp = (yamlList: string[]) => POST('/api/applyApp', { yamlList });
 
-export const putApp = (yamlList: string[], appName: string) =>
-  POST('/api/updateApp', { yamlList, appName });
+export const putApp = (data: {
+  patch: AppPatchPropsType;
+  appName: string;
+  stateFulSetYaml?: string;
+}) => POST('/api/updateApp', data);
 
 export const getMyApps = () =>
   GET<V1Deployment & V1StatefulSet[]>('/api/getApps').then((res) => res.map(adaptAppListItem));
@@ -23,7 +29,7 @@ export const getAppByName = (name: string) =>
   GET(`/api/getAppByAppName?appName=${name}`).then(adaptAppDetail);
 
 export const getAppPodsByAppName = (name: string) =>
-  GET<V1Pod[]>('/api/getAppPodsByAppName', { name }).then((item) => item.map(adaptPod));
+  GET<PodDetailType[]>('/api/getAppPodsByAppName', { name });
 
 export const getPodsMetrics = (podsName: string[]) =>
   POST<SinglePodMetrics[]>('/api/getPodsMetrics', { podsName }).then((item) =>
@@ -35,6 +41,8 @@ export const getPodLogs = (data: {
   podName: string;
   stream: boolean;
   logSize?: number;
+  sinceTime?: number;
+  previous?: boolean;
 }) => POST<string>(`/api/getPodLogs`, data);
 
 export const getPodEvents = (podName: string) =>
@@ -47,3 +55,16 @@ export const pauseAppByName = (appName: string) => GET(`/api/pauseApp?appName=${
 export const startAppByName = (appName: string) => GET(`/api/startApp?appName=${appName}`);
 
 export const restartPodByName = (podName: string) => GET(`/api/restartPod?podName=${podName}`);
+
+export const getAppMonitorData = (payload: {
+  queryName: string;
+  queryKey: keyof MonitorQueryKey;
+  step: string;
+  start?: number;
+  end?: number;
+}) => GET<MonitorDataResult[]>(`/api/monitor/getMonitorData`, payload);
+
+export const getAppLogs = (payload: LogQueryPayload) => POST<string>('/api/log/queryLogs', payload);
+
+export const getLogPodList = (payload: PodListQueryPayload) =>
+  POST<string[]>('/api/log/queryPodList', payload);

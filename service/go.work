@@ -1,0 +1,18 @@
+go 1.22.7
+
+use (
+	.
+	./account
+	./aiproxy
+	./database
+	./exceptionmonitor
+	./launchpad
+	./pay
+	./devbox
+	./vlogs
+)
+
+replace (
+	github.com/labring/sealos/controllers/account => ../controllers/account
+	github.com/labring/sealos/controllers/user => ../controllers/user
+)
