@@ -1,0 +1,697 @@
+# Instincts generated from https://github.com/cubxxw/sealos
+# Generated: 2026-04-24T12:09:05.854Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: sealos-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Commit Length
+
+## Action
+
+Keep commit messages concise (~45 characters)
+
+## Evidence
+
+- Average commit message length: 45 chars
+- Based on 100 commits
+
+---
+id: sealos-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: sealos-import-alias
+trigger: "when importing modules"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Import Alias
+
+## Action
+
+Use path aliases (@/, ~/) instead of relative imports
+
+## Evidence
+
+- Import analysis shows alias pattern
+- Example: import { x } from '@/lib/x'
+
+---
+id: sealos-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Export Style
+
+## Action
+
+Prefer default exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: default
+
+---
+id: sealos-arch-type-based
+trigger: "when adding new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Arch Type Based
+
+## Action
+
+Place code in the appropriate type folder (components/, services/, utils/, etc.)
+
+## Evidence
+
+- Type-based module organization detected
+- Folders: 
+
+---
+id: sealos-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: sealos-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Test Naming
+
+## Action
+
+Name test files using the pattern: *_test.go
+
+## Evidence
+
+- File pattern: *_test.go
+- Consistent across test files
+
+---
+id: sealos-test-types
+trigger: "when planning tests for a feature"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Test Types
+
+## Action
+
+Write unit, e2e tests to match project standards
+
+## Evidence
+
+- Test types detected: unit, e2e
+- Coverage config: yes
+
+---
+id: sealos-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~10x per month
+- Files: frontend/providers/terminal/src/pages/*, frontend/desktop/src/components/app_window/*, frontend/desktop/src/components/desktop_content/*
+
+---
+id: sealos-workflow-refactoring
+trigger: "when refactoring code"
+confidence: 0.8
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Workflow Refactoring
+
+## Action
+
+Follow the refactoring workflow:
+1. Ensure tests pass before refactor
+2. Refactor code structure
+3. Verify tests still pass
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~6x per month
+- Files: src/**/*
+
+---
+id: sealos-workflow-add-or-update-kubernetes-controller
+trigger: "when doing add or update kubernetes controller"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Workflow Add Or Update Kubernetes Controller
+
+## Action
+
+Follow the add-or-update-kubernetes-controller workflow:
+1. Create or update API type definitions (e.g., *_types.go)
+2. Update or add CRD YAMLs under config/crd/bases/
+3. Implement or update controller logic in controllers/xxx/controllers/
+4. Update or add deployment manifests (deploy/, config/manager/, etc.)
+5. Update Makefile, Dockerfile, and PROJECT files as needed
+6. Add or update documentation (README.md, deploy/README.md, etc.)
+7. Update go.mod, go.sum, and go.work as needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: controllers/*/api/v1/*_types.go, controllers/*/config/crd/bases/*.yaml, controllers/*/controllers/*.go
+
+---
+id: sealos-workflow-frontend-feature-or-bugfix
+trigger: "when doing frontend feature or bugfix"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Workflow Frontend Feature Or Bugfix
+
+## Action
+
+Follow the frontend-feature-or-bugfix workflow:
+1. Edit or add React component files (*.tsx)
+2. Edit or add SCSS/CSS module files (*.module.scss, *.scss)
+3. Update or add state/store files (*.ts)
+4. Update or add type/interface files (*.ts)
+5. Sometimes update public assets (images, icons)
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: frontend/*/src/components/**/*.tsx, frontend/*/src/components/**/*.module.scss, frontend/*/src/styles/*.scss
+
+---
+id: sealos-workflow-update-crd-and-sample
+trigger: "when doing update crd and sample"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Workflow Update Crd And Sample
+
+## Action
+
+Follow the update-crd-and-sample workflow:
+1. Edit Go type definitions (api/v1/*_types.go)
+2. Update CRD YAMLs (config/crd/bases/*.yaml)
+3. Update sample YAMLs (config/samples/*.yaml)
+4. Optionally update documentation or example manifests
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: controllers/*/api/v1/*_types.go, controllers/*/config/crd/bases/*.yaml, controllers/*/config/samples/*.yaml
+
+---
+id: sealos-workflow-ci-pipeline-or-workflow-update
+trigger: "when doing ci pipeline or workflow update"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Workflow Ci Pipeline Or Workflow Update
+
+## Action
+
+Follow the ci-pipeline-or-workflow-update workflow:
+1. Edit or add YAML workflow files under .github/workflows/
+2. Optionally update related documentation or contributing guidelines
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: .github/workflows/*.yml, .github/PULL_REQUEST_TEMPLATE.md, CONTRIBUTING.md
+
+---
+id: sealos-workflow-refactor-or-enhance-backend-go-modules
+trigger: "when doing refactor or enhance backend go modules"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Workflow Refactor Or Enhance Backend Go Modules
+
+## Action
+
+Follow the refactor-or-enhance-backend-go-modules workflow:
+1. Edit multiple Go source files in a package
+2. Update go.mod and go.sum as needed
+3. Optionally update tests
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: pkg/**/*.go, go.mod, go.sum
+
+---
+id: sealos-workflow-documentation-update
+trigger: "when doing documentation update"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/cubxxw/sealos
+---
+
+# Sealos Workflow Documentation Update
+
+## Action
+
+Follow the documentation-update workflow:
+1. Edit or add Markdown files in docs/ or README.md
+2. Optionally update i18n versions
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: README.md, docs/**/*.md
+
+---
+id: sealos-instinct-naming-files
+trigger: "When creating or renaming a file in the codebase"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Naming Files
+
+## Action
+
+Use snake_case for file names
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.files
+- Consistent in pkg/apply/applydrivers/apply_drivers_default.go
+
+---
+id: sealos-instinct-naming-functions
+trigger: "When defining a new function"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Naming Functions
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.functions
+- Seen in Go source files
+
+---
+id: sealos-instinct-naming-classes
+trigger: "When defining a new class or struct"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Naming Classes
+
+## Action
+
+Use PascalCase for class/struct names
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.classes
+
+---
+id: sealos-instinct-naming-constants
+trigger: "When defining a constant"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Naming Constants
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Pattern in codeStyle.namingConventions.constants
+
+---
+id: sealos-instinct-import-alias
+trigger: "When importing modules/packages"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Import Alias
+
+## Action
+
+Use import aliases where appropriate
+
+## Evidence
+
+- Pattern in codeStyle.importStyle
+- Seen in Go source files
+
+---
+id: sealos-instinct-export-default
+trigger: "When exporting modules or components"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Export Default
+
+## Action
+
+Use default export style
+
+## Evidence
+
+- Pattern in codeStyle.exportStyle
+
+---
+id: sealos-instinct-test-file-pattern
+trigger: "When creating a test file for Go code"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Test File Pattern
+
+## Action
+
+Name the file with *_test.go suffix
+
+## Evidence
+
+- Pattern in testing.filePattern
+- Seen in test/**/*.go
+
+---
+id: sealos-instinct-test-types
+trigger: "When writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Test Types
+
+## Action
+
+Include both unit and e2e tests as appropriate
+
+## Evidence
+
+- Pattern in testing.testTypes
+
+---
+id: sealos-instinct-test-coverage
+trigger: "When adding or updating tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Test Coverage
+
+## Action
+
+Ensure test coverage is configured and measured
+
+## Evidence
+
+- Presence of check-coverage.yml in .github/workflows
+
+---
+id: sealos-instinct-commit-format
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Commit Format
+
+## Action
+
+Use semantic prefix (e.g., feat, fix, docs, refactor, perf) followed by a colon and concise description
+
+## Evidence
+
+- Seen in commits: 'fix: automatic completion of arch role...', 'docs(main): update latest sealos version...'
+- Pattern in commit prefixes
+
+---
+id: sealos-instinct-commit-length
+trigger: "When writing a commit message"
+confidence: 0.8
+domain: git
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Commit Length
+
+## Action
+
+Keep the commit message concise (average ~45 characters)
+
+## Evidence
+
+- Pattern in commits.averageLength
+
+---
+id: sealos-instinct-add-or-update-kubernetes-controller
+trigger: "When introducing a new Kubernetes controller or making significant updates to an existing one"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Add Or Update Kubernetes Controller
+
+## Action
+
+Follow the sequence: update *_types.go, CRD YAMLs, controller logic, deployment manifests, Makefile/Dockerfile/PROJECT, documentation, and go.mod/go.sum/go.work
+
+## Evidence
+
+- Workflow: add-or-update-kubernetes-controller
+- Pattern in controllers/*/api/v1/*_types.go, controllers/*/config/crd/bases/*.yaml, etc.
+
+---
+id: sealos-instinct-frontend-feature-or-bugfix
+trigger: "When adding a new frontend feature or fixing a frontend bug"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Frontend Feature Or Bugfix
+
+## Action
+
+Edit/add React components (*.tsx), SCSS modules, state/store files, type/interface files, and sometimes public assets
+
+## Evidence
+
+- Workflow: frontend-feature-or-bugfix
+- Pattern in frontend/*/src/components/**/*.tsx, *.scss, *.ts
+
+---
+id: sealos-instinct-update-crd-and-sample
+trigger: "When changing the schema or behavior of a CRD"
+confidence: 0.88
+domain: workflow
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Update Crd And Sample
+
+## Action
+
+Edit Go type definitions, update CRD YAMLs, update sample YAMLs, and optionally update documentation/examples
+
+## Evidence
+
+- Workflow: update-crd-and-sample
+- Pattern in controllers/*/api/v1/*_types.go, config/crd/bases/*.yaml, config/samples/*.yaml
+
+---
+id: sealos-instinct-ci-pipeline-or-workflow-update
+trigger: "When adding or updating CI/CD workflows"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Ci Pipeline Or Workflow Update
+
+## Action
+
+Edit/add YAML files in .github/workflows/ and optionally update related docs/guidelines
+
+## Evidence
+
+- Workflow: ci-pipeline-or-workflow-update
+- Pattern in .github/workflows/*.yml
+
+---
+id: sealos-instinct-refactor-or-enhance-backend-go-modules
+trigger: "When refactoring, renaming, or enhancing Go backend modules"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Refactor Or Enhance Backend Go Modules
+
+## Action
+
+Edit multiple Go files in a package, update go.mod/go.sum, and optionally update tests
+
+## Evidence
+
+- Workflow: refactor-or-enhance-backend-go-modules
+- Pattern in pkg/**/*.go, go.mod, go.sum, test/**/*.go
+
+---
+id: sealos-instinct-documentation-update
+trigger: "When updating or adding documentation"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: cubxxw/sealos
+---
+
+# Sealos Instinct Documentation Update
+
+## Action
+
+Edit/add Markdown files in docs/ or README.md, optionally update i18n versions
+
+## Evidence
+
+- Workflow: documentation-update
+- Pattern in docs/**/*.md, README.md
+
