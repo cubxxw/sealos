@@ -1,0 +1,9 @@
+FROM scratch
+COPY charts charts
+COPY registry registry
+COPY account-service-entrypoint.sh account-service-entrypoint.sh
+
+ENV RELEASE_NAMESPACE=account-system
+ENV RELEASE_NAME=account-service
+
+CMD ["bash account-service-entrypoint.sh"]

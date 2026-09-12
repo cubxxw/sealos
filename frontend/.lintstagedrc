@@ -1,0 +1,4 @@
+{
+  "**/*.{js,jsx,ts,tsx}": ["bash frontend/scripts/prettier-staged.sh"],
+  "**/*.{json,css,scss,md}": ["bash frontend/scripts/prettier-staged.sh"]
+}

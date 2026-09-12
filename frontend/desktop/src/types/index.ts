@@ -1,5 +1,37 @@
+import { Umami } from '@umami/node';
+import { Cron } from 'croner';
+import { type MongoClient } from 'mongodb';
+import { Transporter } from 'nodemailer';
+import SMTPPool from 'nodemailer/lib/smtp-pool';
+import { type AppConfigType } from './system';
+import { BingAdApiClient } from '@/services/backend/bingAdApiClient';
+import { PrismaClient as RegionPrismaClient } from 'prisma/region/generated/client';
+import { PrismaClient as GlobalPrismaClient } from 'prisma/global/generated/client';
+
 export * from './api';
-export * from './session';
 export * from './app';
 export * from './crd';
+export * from './license';
+export * from './login';
 export * from './payment';
+export * from './region';
+export * from './session';
+export * from './system';
+export * from './tools';
+export * from './verification';
+export * from './loginFailureMesage';
+declare global {
+  var mongodb: MongoClient | null;
+  var AppConfig: AppConfigType;
+  var commitCroner: Cron | undefined;
+  var finishCroner: Cron | undefined;
+  var runCroner: Cron | undefined;
+  var WechatAccessToken: string | undefined;
+  var WechatExpiresIn: number | undefined;
+  var nodemailer: Transporter<SMTPPool.SentMessageInfo> | undefined;
+  var umami: Umami | undefined;
+  var dataLayer: { push: Function } | null;
+  var bingAdApiClient: BingAdApiClient | null;
+  var prisma: RegionPrismaClient | undefined;
+  var globalPrisma: GlobalPrismaClient | undefined;
+}

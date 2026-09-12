@@ -9,11 +9,12 @@ It is warmly welcomed if you have interest to hack on sealos. First, we encourag
 - [Reporting security issues](#reporting-security-issues)
 - [Reporting general issues](#reporting-general-issues)
 - [Code and doc contribution](#code-and-doc-contribution)
+- [License and Contributor Agreement](#license-and-contributor-agreement)
 - [Engage to help anything](#engage-to-help-anything)
 
 ## Reporting security issues
 
-Security issues are always treated seriously. As our usual principle, we discourage anyone to spread security issues. If you find a security issue of sealos, please do not discuss it in public and even do not open a public issue. Instead we encourage you to send us a private email to [admin@sealyun.com](mailto:admin@sealyun.com) to report this.
+Security issues are always treated seriously. As our usual principle, we discourage anyone to spread security issues. If you find a security issue of sealos, please do not discuss it in public and even do not open a public issue. Instead we encourage you to send us a private email to [security@sealos.io](mailto:security@sealos.io) to report this.
 
 ## Reporting general issues
 
@@ -221,17 +222,8 @@ The documentation for sealos includes:
 
 - [README.md](https://github.com/labring/sealos/blob/main/README.md)
 - [CONTRIBUTING.md](https://github.com/labring/sealos/blob/main/CONTRIBUTING.md)
-- [DEVELOPGUIDE.md](https://github.com/labring/sealos/blob/main/DEVELOPGUIDE.md)
-- Files under [docs/4.0](https://github.com/labring/sealos/blob/main/docs/4.0)
-   - English docs under [docs/4.0/docs](https://github.com/labring/sealos/tree/main/docs/4.0/docs)
-   - Chinese docs under [docs/4.0/i18n/zh-Hans](https://github.com/labring/sealos/tree/main/docs/4.0/i18n/zh-Hans)
-   - Images under [docs/4.0/img](https://github.com/labring/sealos/tree/main/docs/4.0/img)
-
-If you have experiences in [Docusaurus 2](https://docusaurus.io), you might find the directory structure familiar. Indeed, the [sealos documentation website](https://github.com/fanux/sealos-site) is built with [Docusaurus 2](https://docusaurus.io) and any update to the docs **here** will be synchronized **there**.
-
-Therefore, to update the documentation, rather than contributing to the [website repo](https://github.com/fanux/sealos-site), you should contribute to this repo directly, unless you want to update the home page or custom pages like the [company page](https://www.sealos.io/company).
-
-For a complete list of the docs synchronization mappings, see [sync_docs.yml](https://github.com/labring/sealos/tree/main/.github/sync_docs.yml).
+- [lifecycle/DEVELOPGUIDE.md](https://github.com/labring/sealos/blob/main/lifecycle/DEVELOPGUIDE.md)
+- [Sealos Website & Documentation](https://github.com/labring/sealos.io)
 
 #### Formatting
 
@@ -245,6 +237,42 @@ Please obey the following rules to better format the docs, which would greatly i
 1. Please check if there's any typos in the docs before submitting PRs.
 
 You can also check out the [Docusaurus docs](https://docusaurus.io/docs/markdown-features) to write docs with richer feature.
+
+## License and Contributor Agreement
+
+### Sealos Sustainable Use License
+
+Sealos is licensed under the **Sealos Sustainable Use License**, a custom license based on the Sustainable Use License. This is **not** a standard open source license. Key points:
+
+- ✅ **Permitted**: Internal business use and personal non-commercial use
+- ❌ **Prohibited**: Providing cloud services to third parties (public, private, or managed services)
+- ❌ **Prohibited**: Commercial distribution without permission
+
+📄 **Full license terms**: [LICENSE.md](./LICENSE.md)
+
+### Contributor License Agreement (CLA)
+
+**By contributing to Sealos, you agree to our Contributor License Agreement (CLA).**
+
+The CLA grants labring (the company behind Sealos) and the community certain rights to your contributions, including:
+- Perpetual, worldwide, royalty-free license to use, modify, and distribute your contributions
+- Patent license for your contributions
+- Right to change the license of your contributions as part of the project
+
+📋 **Important**: When you submit any contribution (code, documentation, etc.), you automatically accept the terms of our CLA.
+
+📄 **Full CLA terms**: [CONTRIBUTOR_LICENSE_AGREEMENT.md](./CONTRIBUTOR_LICENSE_AGREEMENT.md)
+
+### License Change Declaration
+
+**⚠️ Notice to Contributors**: By contributing to this project, you acknowledge and agree that:
+
+1. Your contributions will be licensed under the Sealos Sustainable Use License
+2. labring reserves the right to change the license of the project and your contributions
+3. You grant labring the necessary rights to make such license changes
+4. You have read and understood both the current license terms and the CLA
+
+If you do not agree to these terms, please do not contribute to this project.
 
 ## Engage to help anything
 

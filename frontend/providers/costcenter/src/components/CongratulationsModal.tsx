@@ -1,0 +1,114 @@
+import { Modal, ModalContent, ModalOverlay, Flex, Text, Box, Img, Divider } from '@chakra-ui/react';
+import { CheckCircle } from 'lucide-react';
+import congratsHeaderImage from '@/assets/congrats_header.svg';
+import { Button } from '@sealos/shadcn-ui';
+import { formatTrafficAuto } from '@/utils/format';
+import { useTranslation } from 'next-i18next';
+import type { MaxResourcesRecord } from '@/types/plan';
+
+interface CongratulationsModalProps {
+  mode?: 'upgrade' | 'renew';
+  planName?: string;
+  maxResources?: MaxResourcesRecord;
+  traffic?: number;
+  onClose: () => void;
+  isOpen: boolean;
+}
+
+export default function CongratulationsModal(props: CongratulationsModalProps) {
+  const { onClose, isOpen } = props;
+  const { t } = useTranslation();
+  const mode = props.mode || 'upgrade';
+
+  const r = props.maxResources;
+  const benefits = {
+    cpu: r?.cpu ? `${r.cpu.toString()} vCPU` : '2 vCPU',
+    memory: r?.memory ? `${r.memory.toString()} RAM` : '2GB RAM',
+    storage: r?.storage ? `${r.storage.toString()} Disk` : '5GB Disk',
+    traffic: props.traffic ? formatTrafficAuto(props.traffic) : '1GB Traffic',
+    nodeports: r?.nodeports ? r.nodeports.toString() : '1 Nodeport'
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} isCentered closeOnOverlayClick={false}>
+      <ModalOverlay bg="rgba(0, 0, 0, 0.12)" backdropFilter="blur(15px)" />
+      <ModalContent
+        maxW="378px"
+        bg="white"
+        borderRadius="16px"
+        p="0"
+        overflow="hidden"
+        position="relative"
+      >
+        <Box display="flex" alignItems="center" justifyContent="center" w="100%">
+          <Img
+            src={congratsHeaderImage.src}
+            alt="Congratulations"
+            maxHeight="180px"
+            objectFit="contain"
+            draggable={false}
+          />
+        </Box>
+        <Flex direction="column" align="start" position="relative" p={'24px'}>
+          <Text
+            fontSize="28px"
+            fontWeight="700"
+            color="var(--color-zinc-900)"
+            mb="8px"
+            textAlign="start"
+          >
+            {mode === 'renew'
+              ? t('common:subscription_renewed_title')
+              : t('common:congratulations')}
+          </Text>
+
+          <Text
+            fontSize="16px"
+            color="var(--color-zinc-600)"
+            textAlign="start"
+            lineHeight="1.5"
+            whiteSpace="pre-line"
+          >
+            {mode === 'renew'
+              ? t('common:subscription_renewed_desc')
+              : t('common:you_have_upgraded_to_plan_benefits_unlocked', {
+                  planName: props.planName || t('common:pro_plan')
+                })}
+          </Text>
+
+          <Divider my="8px" borderColor={'#F4F4F5'} />
+          <Flex direction="column" gap="12px" mb="32px" w="100%">
+            <Flex align="center" gap="12px">
+              <CheckCircle size={20} color="#10B981" />
+              <Text fontSize="16px" color="var(--color-zinc-700)">
+                {benefits.cpu}
+              </Text>
+            </Flex>
+            <Flex align="center" gap="12px">
+              <CheckCircle size={20} color="#10B981" />
+              <Text fontSize="16px" color="var(--color-zinc-700)">
+                {benefits.memory}
+              </Text>
+            </Flex>
+            <Flex align="center" gap="12px">
+              <CheckCircle size={20} color="#10B981" />
+              <Text fontSize="16px" color="var(--color-zinc-700)">
+                {benefits.storage}
+              </Text>
+            </Flex>
+            <Flex align="center" gap="12px">
+              <CheckCircle size={20} color="#10B981" />
+              <Text fontSize="16px" color="var(--color-zinc-700)">
+                {benefits.traffic}
+              </Text>
+            </Flex>
+          </Flex>
+
+          <Button variant={'outline'} className="w-full" onClick={onClose}>
+            {t('common:close')}
+          </Button>
+        </Flex>
+      </ModalContent>
+    </Modal>
+  );
+}

@@ -3,9 +3,13 @@ FROM scratch
 USER 65532:65532
 
 COPY registry registry
-COPY manifests manifests
+COPY charts charts
+COPY applaunchpad-frontend-entrypoint.sh applaunchpad-frontend-entrypoint.sh
 
-ENV cloudDomain="cloud.example.com"
-ENV ingressSecret="wildcard-secret"
+ENV certSecretName="wildcard-cert"
 
-CMD ["kubectl apply -f manifests"]
+ENV monitorUrl="http://launchpad-monitor.sealos.svc.cluster.local:8428"
+ENV billingUrl="http://account-service.account-system.svc:2333"
+ENV logUrl=""
+
+CMD ["bash applaunchpad-frontend-entrypoint.sh"]

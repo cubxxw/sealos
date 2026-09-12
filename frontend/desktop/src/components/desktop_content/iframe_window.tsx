@@ -1,8 +1,8 @@
 import useAppStore from '@/stores/app';
 import { useMemo } from 'react';
-import styles from './index.module.scss';
+import styles from './index.module.css';
 
-export default function Iframe_window({ pid }: { pid: number }) {
+export default function Iframe_window({ pid, onLoad }: { pid: number; onLoad?: () => void }) {
   const findAppInfo = useAppStore((state) => state.findAppInfoById);
   const app = findAppInfo(pid);
   const url = useMemo(() => app?.data?.url || '', [app?.data?.url]);
@@ -12,8 +12,9 @@ export default function Iframe_window({ pid }: { pid: number }) {
     <iframe
       className={styles.iframeContainer}
       src={url}
-      allow="camera;microphone;clipboard-write;"
+      allow="camera;microphone;clipboard-write;clipboard-read;"
       id={`app-window-${app?.key}`}
+      onLoad={onLoad}
     />
   );
 }

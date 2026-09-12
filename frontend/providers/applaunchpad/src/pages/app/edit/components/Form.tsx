@@ -1,69 +1,102 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import {
-  Box,
-  Button,
-  Flex,
-  Grid,
-  FormControl,
-  Input,
-  Divider,
-  Switch,
-  Accordion,
-  AccordionButton,
-  AccordionItem,
-  AccordionPanel,
-  AccordionIcon,
-  Link,
-  useTheme,
-  useDisclosure
-} from '@chakra-ui/react';
-import { InfoOutlineIcon } from '@chakra-ui/icons';
-import { useFieldArray, UseFormReturn } from 'react-hook-form';
-import { useRouter } from 'next/router';
-import RangeInput from '@/components/RangeInput';
-import MySlider from '@/components/Slider';
-import MyRangeSlider from '@/components/RangeSlider';
+import { obj2Query } from '@/api/tools';
 import MyIcon from '@/components/Icon';
-import EditEnvs from './EditEnvs';
-import type { ConfigMapType } from './ConfigmapModal';
-import type { StoreType } from './StoreModal';
+import { defaultSliderKey, defaultGpuSliderKey } from '@/constants/app';
+import { GpuAmountMarkList } from '@/constants/editApp';
+import { useGlobalStore } from '@/store/global';
+import { useClientAppConfig } from '@/hooks/useClientAppConfig';
+import { useUserStore } from '@/store/user';
 import type { QueryType } from '@/types';
-import type { AppEditType } from '@/types/app';
-import { customAlphabet } from 'nanoid';
-import { CpuSlideMarkList, MemorySlideMarkList } from '@/constants/editApp';
-import { SEALOS_DOMAIN } from '@/store/static';
-import Tabs from '@/components/Tabs';
-import Tip from '@/components/Tip';
-import MySelect from '@/components/Select';
-
+import { type AppEditType } from '@/types/app';
+import { sliderNumber2MarkList } from '@/utils/adapt';
+import { resourcePropertyMap, useUserQuota, type WorkspaceQuotaItem } from '@sealos/shared';
+import { sealosApp } from 'sealos-desktop-sdk/app';
+import { Trash2, Plus, Minus } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger } from '@sealos/shadcn-ui/tabs';
+import { Card, CardContent, CardHeader, CardTitle } from '@sealos/shadcn-ui/card';
+import { Input } from '@sealos/shadcn-ui/input';
+import { Label } from '@sealos/shadcn-ui/label';
+import { Separator } from '@sealos/shadcn-ui/separator';
+import { RadioGroup, RadioGroupItem } from '@sealos/shadcn-ui/radio-group';
+import { Slider } from '@sealos/shadcn-ui/slider';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@sealos/shadcn-ui/select';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger
+} from '@sealos/shadcn-ui/tooltip';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@sealos/shadcn-ui/table';
+import { Button } from '@sealos/shadcn-ui/button';
+import { toast } from 'sonner';
+import { throttle } from 'lodash';
+import { useTranslation } from 'next-i18next';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFieldArray, UseFormReturn } from 'react-hook-form';
+import type { ConfigMapType } from './ConfigmapModal';
+import PriceBox from './PriceBox';
+import QuotaBox from './QuotaBox';
+import type { StoreType } from './StoreModal';
+import { NetworkSection } from './NetworkSection';
+import { mountPathToConfigMapKey } from '@/utils/tools';
+import {
+  cpuMillicoresToQuantity,
+  memoryMiToQuantity,
+  quantityToCpuMillicores,
+  quantityToMemoryMi,
+  quantityToStorageGi,
+  storageGiToQuantity
+} from '@/utils/resourceQuantity';
+import {
+  APP_NAME_BASE_MAX_LENGTH,
+  APP_NAME_BASE_PATTERN,
+  isValidAppNameBase
+} from '@/utils/appNameValidation';
 
 const ConfigmapModal = dynamic(() => import('./ConfigmapModal'));
 const StoreModal = dynamic(() => import('./StoreModal'));
-
-const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz', 12);
-import styles from './index.module.scss';
-import { obj2Query } from '@/api/tools';
-import { throttle } from 'lodash';
-import { Tooltip } from '@chakra-ui/react';
+const EditEnvs = dynamic(() => import('./EditEnvs'));
 
 const Form = ({
   formHook,
   already,
-  defaultStorePathList,
-  pxVal
+  existingStores,
+  countGpuInventory,
+  refresh,
+  onDomainVerified,
+  exceededQuotas
 }: {
   formHook: UseFormReturn<AppEditType, any>;
   already: boolean;
-  defaultStorePathList: string[];
-  pxVal: number;
+  existingStores: AppEditType['storeList'];
+  countGpuInventory: (type?: string) => number;
+  refresh: boolean;
+  onDomainVerified?: (params: { index: number; customDomain: string }) => void;
+  exceededQuotas: WorkspaceQuotaItem[];
 }) => {
   if (!formHook) return null;
-
+  const { t } = useTranslation();
+  const { formSliderListConfig } = useGlobalStore();
+  const config = useClientAppConfig();
+  const { userSourcePrice } = useUserStore();
   const router = useRouter();
   const { name } = router.query as QueryType;
-  const theme = useTheme();
   const isEdit = useMemo(() => !!name, [name]);
+
   const {
     register,
     control,
@@ -71,6 +104,16 @@ const Form = ({
     getValues,
     formState: { errors }
   } = formHook;
+
+  const getCpuMillicores = useCallback(
+    () => quantityToCpuMillicores(getValues('cpu')),
+    [getValues]
+  );
+  const getMemoryMi = useCallback(() => quantityToMemoryMi(getValues('memory')), [getValues]);
+  const getStorageGiTotal = useCallback(
+    () => getValues('storeList').reduce((sum, item) => sum + quantityToStorageGi(item.value), 0),
+    [getValues]
+  );
 
   const { fields: envs, replace: replaceEnvs } = useFieldArray({
     control,
@@ -93,61 +136,76 @@ const Form = ({
     name: 'storeList'
   });
 
-  const navList = [
-    {
-      id: 'baseInfo',
-      label: '基础配置',
-      icon: 'formInfo',
-      isSetting:
-        getValues('appName') &&
-        getValues('imageName') &&
-        (getValues('secret.use')
-          ? getValues('secret.username') &&
-            getValues('secret.password') &&
-            getValues('secret.serverAddress')
-          : true)
-    },
-    {
-      id: 'deployMode',
-      label: '部署模式',
-      icon: 'deployMode',
-      isSetting: getValues('hpa.use') ? !!getValues('hpa.value') : !!getValues('replicas')
-    },
-    {
-      id: 'network',
-      label: '网络配置',
-      icon: 'network',
-      isSetting: !!getValues('containerOutPort')
-    },
-    {
-      id: 'settings',
-      label: '高级配置',
-      icon: 'settings',
-      isSetting:
-        getValues('runCMD') ||
-        getValues('cmdParam') ||
-        getValues('envs').length > 0 ||
-        getValues('configMapList').length > 0 ||
-        getValues('storeList').length > 0
-    }
-  ];
+  const navList = useMemo(
+    () => [
+      {
+        id: 'baseInfo',
+        label: 'Basic Config',
+        icon: 'formInfo',
+        isSetting:
+          getValues('appName') &&
+          getValues('imageName') &&
+          (getValues('secret.use')
+            ? getValues('secret.username') &&
+              getValues('secret.password') &&
+              getValues('secret.serverAddress')
+            : true)
+      },
+      {
+        id: 'network',
+        label: 'Network Configuration',
+        icon: 'network',
+        isSetting: getValues('networks').length > 0
+      },
+      {
+        id: 'settings',
+        label: 'Advanced Configuration',
+        icon: 'settings',
+        isSetting:
+          getValues('runCMD') ||
+          getValues('cmdParam') ||
+          getValues('envs').length > 0 ||
+          getValues('configMapList').length > 0 ||
+          getValues('storeList').length > 0
+      }
+    ],
+    [getValues]
+  );
 
   const [activeNav, setActiveNav] = useState(navList[0].id);
   const [configEdit, setConfigEdit] = useState<ConfigMapType>();
   const [storeEdit, setStoreEdit] = useState<StoreType>();
-  const { isOpen: isEditEnvs, onOpen: onOpenEditEnvs, onClose: onCloseEditEnvs } = useDisclosure();
+  const [isEditEnvs, setIsEditEnvs] = useState(false);
+  const onOpenEditEnvs = () => setIsEditEnvs(true);
+  const onCloseEditEnvs = () => setIsEditEnvs(false);
+  const getFieldActionText = (hasValue: boolean) => t(hasValue ? 'Update' : 'Add');
+
+  // For quota calculation in fields
+  const { userQuota } = useUserQuota();
+
+  const storageQuotaLeft = useMemo(() => {
+    const storageQuota = userQuota?.find((item) => item.type === 'storage');
+    if (!storageQuota) return 0;
+
+    const newlyUsedStorage =
+      storeList.reduce((sum, item) => sum + quantityToStorageGi(item.value), 0) -
+      existingStores.reduce((sum, item) => sum + quantityToStorageGi(item.value), 0);
+
+    return (
+      (storageQuota.limit - storageQuota.used) / resourcePropertyMap.storage.scale -
+      newlyUsedStorage
+    );
+  }, [userQuota, existingStores, storeList]);
 
   // listen scroll and set activeNav
   useEffect(() => {
-    const scrollFn = throttle((e: Event) => {
-      if (!e.target) return;
+    const scrollFn = throttle(() => {
       const doms = navList.map((item) => ({
         dom: document.getElementById(item.id),
         id: item.id
       }));
 
-      const dom = e.target as HTMLDivElement;
-      const scrollTop = dom.scrollTop;
+      const scrollTop = window.scrollY || document.documentElement.scrollTop;
 
       for (let i = doms.length - 1; i >= 0; i--) {
         const offsetTop = doms[i].dom?.offsetTop || 0;
@@ -157,698 +215,1169 @@ const Form = ({
         }
       }
     }, 200);
-    document.getElementById('form-container')?.addEventListener('scroll', scrollFn);
+    window.addEventListener('scroll', scrollFn);
     return () => {
-      document.getElementById('form-container')?.removeEventListener('scroll', scrollFn);
+      window.removeEventListener('scroll', scrollFn);
     };
     // eslint-disable-next-line
   }, []);
 
-  const Label = ({
-    children,
-    w = 80,
-    ...props
-  }: {
-    children: string;
-    w?: number | 'auto';
-    [key: string]: any;
-  }) => (
-    <Box
-      flex={`0 0 ${w === 'auto' ? 'auto' : `${w}px`}`}
-      {...props}
-      color={'#333'}
-      userSelect={'none'}
-    >
-      {children}
-    </Box>
-  );
+  // Handle scrollTo query parameter
+  useEffect(() => {
+    const rawScrollTo = router.query.scrollTo;
+    const scrollTo = Array.isArray(rawScrollTo) ? rawScrollTo[0] : rawScrollTo;
+    if (!scrollTo) return;
 
-  const boxStyles = {
-    border: theme.borders.base,
-    borderRadius: 'sm',
-    mb: 4,
-    bg: 'white'
-  };
-  const headerStyles = {
-    py: 4,
-    pl: '46px',
-    fontSize: '2xl',
-    color: 'myGray.900',
-    fontWeight: 'bold',
-    display: 'flex',
-    alignItems: 'center',
-    backgroundColor: 'myWhite.600'
+    let attempts = 0;
+    const maxAttempts = 8;
+    const scrollToTarget = () => {
+      const el = document.getElementById(scrollTo);
+      if (!el) {
+        if (attempts < maxAttempts) {
+          attempts += 1;
+          setTimeout(scrollToTarget, 120);
+        }
+        return;
+      }
+      const yOffset = -120;
+      const y = el.getBoundingClientRect().top + window.pageYOffset + yOffset;
+      window.scrollTo({ top: y, behavior: 'smooth' });
+    };
+
+    scrollToTarget();
+  }, [router.query.scrollTo]);
+
+  // GPU select list for shadcn Select
+  const gpuSelectList = useMemo(
+    () =>
+      userSourcePrice?.gpu
+        ? [
+            { label: t('No GPU'), value: '', alias: '', vm: 0, inventory: 0 },
+            ...userSourcePrice.gpu.map((item) => ({
+              label: item.alias,
+              value: item.type,
+              alias: item.alias,
+              vm: Math.round(item.vm),
+              inventory: countGpuInventory(item.type)
+            }))
+          ]
+        : [],
+    [countGpuInventory, t, userSourcePrice?.gpu]
+  );
+  const selectedGpu = useMemo(() => {
+    const selected = userSourcePrice?.gpu?.find((item) => item.type === getValues('gpu.type'));
+    if (!selected) return;
+    return {
+      ...selected,
+      inventory: countGpuInventory(selected.type)
+    };
+  }, [userSourcePrice?.gpu, countGpuInventory, getValues]);
+
+  // cpu, memory have different sliderValue
+  const countSliderList = useCallback(() => {
+    const gpuType = getValues('gpu.type');
+    // Use GPU-specific config if exists, otherwise use default-gpu, finally fallback to default
+    let key = defaultSliderKey;
+    if (gpuType) {
+      if (formSliderListConfig[gpuType]) {
+        key = gpuType;
+      } else if (formSliderListConfig[defaultGpuSliderKey]) {
+        key = defaultGpuSliderKey;
+      }
+    }
+
+    const cpu = getCpuMillicores();
+    const memory = getMemoryMi();
+
+    const cpuList = formSliderListConfig[key].cpu;
+    const memoryList = formSliderListConfig[key].memory;
+
+    const sortedCpuList = !!gpuType
+      ? cpuList
+      : cpu !== undefined
+      ? [...new Set([...cpuList, cpu])].sort((a, b) => a - b)
+      : cpuList;
+
+    const sortedMemoryList = !!gpuType
+      ? memoryList
+      : memory !== undefined
+      ? [...new Set([...memoryList, memory])].sort((a, b) => a - b)
+      : memoryList;
+
+    return {
+      cpu: sliderNumber2MarkList({
+        val: sortedCpuList,
+        type: 'cpu',
+        gpuAmount: getValues('gpu.amount')
+      }),
+      memory: sliderNumber2MarkList({
+        val: sortedMemoryList,
+        type: 'memory',
+        gpuAmount: getValues('gpu.amount')
+      })
+    };
+  }, [formSliderListConfig, getCpuMillicores, getMemoryMi, getValues]);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const SliderList = useMemo(() => countSliderList(), [already, refresh]);
+
+  const persistentVolumes = useMemo(() => {
+    return getValues('volumes')
+      .filter((item) => 'persistentVolumeClaim' in item)
+      .reduce(
+        (
+          acc: {
+            path: string;
+            name: string;
+          }[],
+          volume
+        ) => {
+          const mount = getValues('volumeMounts').find((m) => m.name === volume.name);
+          if (mount) {
+            acc.push({
+              path: mount.mountPath,
+              name: volume.name
+            });
+          }
+          return acc;
+        },
+        []
+      );
+  }, [getValues]);
+
+  const handleOpenCostcenter = () => {
+    sealosApp.runEvents('openDesktopApp', {
+      appKey: 'system-costcenter',
+      pathname: '/',
+      query: {
+        mode: 'upgrade'
+      },
+      messageData: {
+        type: 'InternalAppCall',
+        mode: 'upgrade'
+      }
+    });
   };
 
   return (
     <>
-      <Grid
-        height={'100%'}
-        templateColumns={'220px 1fr'}
-        gridGap={5}
-        alignItems={'start'}
-        pl={`${pxVal}px`}
+      <div
+        className="grid gap-5 max-w-[1200px] w-full"
+        style={{
+          gridTemplateColumns: '266px 1fr'
+        }}
       >
-        <Box>
-          <Tabs
-            list={[
-              { id: 'form', label: '配置表单' },
-              { id: 'yaml', label: 'YAML 文件' }
-            ]}
-            activeId={'form'}
-            onChange={() =>
-              router.replace(
-                `/app/edit?${obj2Query({
-                  name,
-                  type: 'yaml'
-                })}`
-              )
-            }
-          />
-          <Box mt={3} borderRadius={'sm'} overflow={'hidden'} backgroundColor={'white'}>
-            {navList.map((item) => (
-              <Box key={item.id} onClick={() => router.replace(`#${item.id}`)}>
-                <Flex
-                  px={5}
-                  py={3}
-                  cursor={'pointer'}
-                  borderLeft={'2px solid'}
-                  alignItems={'center'}
-                  h={'48px'}
-                  _hover={{
-                    backgroundColor: 'myWhite.400'
-                  }}
-                  {...(activeNav === item.id
-                    ? {
-                        fontWeight: 'bold',
-                        borderColor: 'myGray.900',
-                        backgroundColor: 'myWhite.600 !important'
-                      }
-                    : {
-                        color: 'myGray.500',
-                        borderColor: 'myGray.200',
-                        backgroundColor: 'transparent'
-                      })}
+        {/* Left Sidebar */}
+        <div className="h-full relative">
+          <div className="flex flex-col w-[266px] gap-4">
+            <Tabs defaultValue="form" className="w-full">
+              <TabsList className="w-full h-auto bg-zinc-100 rounded-xl">
+                <TabsTrigger
+                  value="form"
+                  className="flex-1 h-9 text-sm rounded-lg font-medium shadow-sm"
                 >
-                  <MyIcon
-                    name={item.icon as any}
-                    w={'20px'}
-                    h={'20px'}
-                    color={activeNav === item.id ? 'myGray.500' : 'myGray.400'}
-                  />
-                  <Box ml={4}>{item.label}</Box>
-                </Flex>
-              </Box>
-            ))}
-          </Box>
-        </Box>
+                  {t('Config Form')}
+                </TabsTrigger>
+                <TabsTrigger
+                  value="yaml"
+                  className="flex-1 h-9 text-sm font-normal"
+                  onClick={() =>
+                    router.replace(
+                      `/app/edit?${obj2Query({
+                        name,
+                        type: 'yaml'
+                      })}`
+                    )
+                  }
+                >
+                  {t('YAML File')}
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
 
-        <Box
-          id={'form-container'}
-          pr={`${pxVal}px`}
-          height={'100%'}
-          position={'relative'}
-          overflowY={'scroll'}
-        >
-          {/* base info */}
-          <Box id={'baseInfo'} {...boxStyles}>
-            <Box {...headerStyles}>
-              <MyIcon name={'formInfo'} mr={5} w={'20px'} color={'myGray.500'} />
-              基础配置
-            </Box>
-            <Box px={'42px'} py={'24px'}>
-              <FormControl mb={7} isInvalid={!!errors.appName} w={'500px'}>
-                <Flex alignItems={'center'}>
-                  <Label>应用名称</Label>
+            {/* <div className="mt-3 overflow-hidden rounded-lg border border-zinc-200 bg-white p-1">
+            {navList.map((item) => {
+              const IconComponent = item.icon === 'formInfo' ? FileText : item.icon === 'network' ? Globe : Settings;
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => {
+                    const element = document.getElementById(item.id);
+                    if (element) {
+                      element.scrollIntoView({ behavior: 'smooth' });
+                    }
+                  }}
+                  className={`flex h-10 cursor-pointer items-center gap-2 rounded px-2 text-zinc-900 hover:bg-zinc-100 ${
+                    activeNav === item.id ? 'bg-zinc-100' : 'bg-transparent'
+                  }`}
+                >
+                  <div
+                    className={`h-6 w-0.5 rounded-full bg-zinc-900 transition-opacity ${
+                      activeNav === item.id ? 'opacity-100' : 'opacity-0'
+                    }`}
+                  />
+                  <IconComponent
+                    className={`h-5 w-5 ${activeNav === item.id ? 'text-zinc-900' : 'text-zinc-500'}`}
+                  />
+                  <span className="text-sm">{t(item.label)}</span>
+                </div>
+              );
+            })}
+          </div> */}
+
+            {/* Price Box */}
+            {userSourcePrice && (
+              <div className="overflow-hidden">
+                <PriceBox
+                  pods={
+                    getValues('hpa.use')
+                      ? [getValues('hpa.minReplicas') || 1, getValues('hpa.maxReplicas') || 2]
+                      : [getValues('replicas') || 1, getValues('replicas') || 1]
+                  }
+                  cpu={getCpuMillicores()}
+                  memory={getMemoryMi()}
+                  storage={getStorageGiTotal()}
+                  gpu={
+                    !!getValues('gpu.type')
+                      ? {
+                          type: getValues('gpu.type'),
+                          amount: getValues('gpu.amount')
+                        }
+                      : undefined
+                  }
+                  nodeports={getValues('networks').filter((item) => item.openNodePort)?.length || 0}
+                />
+              </div>
+            )}
+
+            {/* Quota Box */}
+            {userSourcePrice && (
+              <div className="overflow-hidden">
+                <QuotaBox />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right Content */}
+        <div id="form-container" className="relative w-full min-w-0 space-y-4 mb-10">
+          {/* Name Card */}
+          <Card className="">
+            <CardHeader className="pt-8 px-8 pb-5 bg-transparent gap-0">
+              <CardTitle className="text-xl font-medium text-zinc-900">{t('App Name')}</CardTitle>
+            </CardHeader>
+            <CardContent className="px-8 pb-8">
+              <div className="flex flex-col gap-2">
+                <Input
+                  aria-label={t('App Name')}
+                  className={`max-w-[400px] h-10 placeholder:text-zinc-500 ${
+                    errors.appName ? 'border-red-500' : ''
+                  }`}
+                  disabled={isEdit}
+                  title={isEdit ? t('Not allowed to change app name') || '' : ''}
+                  autoFocus={true}
+                  maxLength={isEdit ? undefined : APP_NAME_BASE_MAX_LENGTH}
+                  placeholder={t('Enter an app name.') || ''}
+                  {...register(
+                    'appName',
+                    isEdit
+                      ? {}
+                      : {
+                          required: t('App Name is required') || '',
+                          maxLength: {
+                            value: APP_NAME_BASE_MAX_LENGTH,
+                            message: t('App name base length limit', {
+                              length: APP_NAME_BASE_MAX_LENGTH
+                            })
+                          },
+                          pattern: {
+                            value: APP_NAME_BASE_PATTERN,
+                            message: 'invalid'
+                          },
+                          validate: (value) => isValidAppNameBase(value) || 'invalid'
+                        }
+                  )}
+                />
+                {errors.appName && (
+                  <div className="text-sm text-red-500">
+                    {errors.appName.type === 'pattern' || errors.appName.type === 'validate' ? (
+                      <>
+                        <p>{t('Invalid name')}</p>
+                        <ul className="list-disc list-inside ml-1 mt-1">
+                          <li>{t('Use only lowercase letters, numbers, or hyphens (-)')}</li>
+                          <li>{t('Must start with a lowercase letter')}</li>
+                          <li>{t('Must end with a lowercase letter or number')}</li>
+                          <li>
+                            {t('App name base length limit', {
+                              length: APP_NAME_BASE_MAX_LENGTH
+                            })}
+                          </li>
+                        </ul>
+                      </>
+                    ) : (
+                      <p>{errors.appName.message}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Image Card */}
+          <Card className="driver-deploy-image">
+            <CardHeader className="pt-8 px-8 pb-5 bg-transparent gap-0">
+              <CardTitle className="text-xl font-medium text-zinc-900">{t('Image')}</CardTitle>
+            </CardHeader>
+            <CardContent className="px-8 pb-8 space-y-3">
+              {/* Public/Private Toggle */}
+              <RadioGroup
+                value={getValues('secret.use') ? 'private' : 'public'}
+                onValueChange={(val) => setValue('secret.use', val === 'private')}
+                className="flex gap-3 mb-4"
+              >
+                <label
+                  className={`min-w-[150px] h-10 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-all ${
+                    !getValues('secret.use')
+                      ? 'border-zinc-900 bg-white'
+                      : 'border-zinc-200 bg-white hover:bg-zinc-50'
+                  }`}
+                >
+                  <RadioGroupItem value="public" />
+                  <span className="text-sm font-medium">{t('Public')}</span>
+                </label>
+                <label
+                  className={`min-w-[150px] h-10 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-all ${
+                    getValues('secret.use')
+                      ? 'border-zinc-900 bg-white'
+                      : 'border-zinc-200 bg-white hover:bg-zinc-50'
+                  }`}
+                >
+                  <RadioGroupItem value="private" />
+                  <span className="text-sm font-medium">{t('Private')}</span>
+                </label>
+              </RadioGroup>
+
+              {/* Image Name */}
+              <div className="grid grid-cols-[100px_1fr] items-start gap-3">
+                <Label className="text-sm font-medium text-zinc-900 h-10 flex items-center">
+                  {t('Image Name')}
+                </Label>
+                <div className="flex flex-col gap-1">
                   <Input
-                    disabled={isEdit}
-                    title={isEdit ? '不允许修改应用名称' : ''}
-                    autoFocus={true}
-                    {...register('appName', {
-                      required: '应用名称不能为空',
-                      pattern: {
-                        value: /^[a-z0-9]+([-.][a-z0-9]+)*$/g,
-                        message: '应用名只能包含小写字母、数字、-和.'
+                    className={`max-w-[360px] h-10 placeholder:text-zinc-500 ${
+                      errors.imageName ? 'border-red-500' : ''
+                    }`}
+                    placeholder={`${t('Image Name')}`}
+                    {...register('imageName', {
+                      required: t('Image name cannot be empty') || '',
+                      maxLength: {
+                        value: 255,
+                        message: t('Image name cannot exceed 255 characters') || ''
+                      },
+                      setValueAs(e) {
+                        return e.replace(/\s*/g, '');
                       }
                     })}
                   />
-                </Flex>
-              </FormControl>
-              <Box mb={7}>
-                <Flex alignItems={'center'}>
-                  <Label>镜像源</Label>
-                  <Tabs
-                    w={'126px'}
-                    size={'sm'}
-                    list={[
-                      {
-                        label: '公共',
-                        id: `public`
-                      },
-                      {
-                        label: '私有',
-                        id: `private`
-                      }
-                    ]}
-                    activeId={getValues('secret.use') ? 'private' : 'public'}
-                    onChange={(val) => {
-                      if (val === 'public') {
-                        setValue('secret.use', false);
-                      } else {
-                        setValue('secret.use', true);
-                      }
-                    }}
-                  />
-                </Flex>
-                <Box mt={4} pl={10} borderLeft={theme.borders.base}>
-                  <FormControl isInvalid={!!errors.imageName} w={'500px'}>
-                    <Flex alignItems={'center'}>
-                      <Label>镜像名</Label>
+                  {errors.imageName && (
+                    <p className="text-sm text-red-500">{errors.imageName.message}</p>
+                  )}
+                </div>
+              </div>
+
+              {getValues('secret.use') && (
+                <>
+                  <div className="grid grid-cols-[100px_1fr] items-start gap-3">
+                    <Label className="text-sm font-medium text-zinc-900 h-10 flex items-center">
+                      {t('Username')}
+                    </Label>
+                    <div className="flex flex-col gap-1">
                       <Input
-                        value={getValues('imageName')}
-                        backgroundColor={getValues('imageName') ? 'myWhite.500' : 'myWhite.400'}
-                        placeholder="镜像名"
-                        {...register('imageName', {
-                          required: '镜像名不能为空',
-                          // pattern: {
-                          //   value: /^.+\/.+:.+$/g,
-                          //   message: '镜像名需满足 url/name:version 的格式'
-                          // },
-                          setValueAs(e) {
-                            return e.replace(/\s*/g, '');
-                          }
+                        className={`max-w-[360px] h-10 placeholder:text-zinc-500 ${
+                          errors.secret?.username ? 'border-red-500' : ''
+                        }`}
+                        placeholder={`${t('Username for the image registry')}`}
+                        {...register('secret.username', {
+                          required: t('The user name cannot be empty') || ''
                         })}
                       />
-                    </Flex>
-                  </FormControl>
-                  {getValues('secret.use') ? (
-                    <>
-                      <FormControl mt={5} isInvalid={!!errors.secret?.username} w={'500px'}>
-                        <Flex alignItems={'center'}>
-                          <Label>用户名</Label>
-                          <Input
-                            backgroundColor={getValues('imageName') ? 'myWhite.500' : 'myWhite.400'}
-                            placeholder={'镜像仓库的用户名'}
-                            {...register('secret.username', {
-                              required: '私有镜像, 用户名不能为空'
-                            })}
-                          />
-                        </Flex>
-                      </FormControl>
-                      <FormControl mt={5} isInvalid={!!errors.secret?.password} w={'500px'}>
-                        <Flex alignItems={'center'}>
-                          <Label>密码</Label>
-                          <Input
-                            type={'password'}
-                            placeholder={'镜像仓库的密码'}
-                            backgroundColor={getValues('imageName') ? 'myWhite.500' : 'myWhite.400'}
-                            {...register('secret.password', {
-                              required: '私有镜像, 密码不能为空'
-                            })}
-                          />
-                        </Flex>
-                      </FormControl>
-                      <FormControl mt={5} isInvalid={!!errors.secret?.serverAddress} w={'500px'}>
-                        <Flex alignItems={'center'}>
-                          <Label w={110}>镜像仓库地址</Label>
-                          <Input
-                            backgroundColor={getValues('imageName') ? 'myWhite.500' : 'myWhite.400'}
-                            placeholder={'镜像仓库的地址'}
-                            {...register('secret.serverAddress', {
-                              required: '私有镜像, 地址不能为空'
-                            })}
-                          />
-                        </Flex>
-                      </FormControl>
-                    </>
-                  ) : null}
-                </Box>
-              </Box>
-              <Flex mb={10} pr={3} alignItems={'flex-start'}>
-                <Label w={60}>CPU</Label>
-                <MySlider
-                  markList={CpuSlideMarkList}
-                  activeVal={getValues('cpu')}
-                  setVal={(e) => {
-                    setValue('cpu', CpuSlideMarkList[e].value);
-                  }}
-                  max={7}
-                  min={0}
-                  step={1}
-                />
-                <Box ml={5} transform={'translateY(10px)'} color={'myGray.500'}>
-                  (Core)
-                </Box>
-              </Flex>
-              <Flex mb={8} pr={3} alignItems={'center'}>
-                <Label w={60}>内存</Label>
-                <MySlider
-                  markList={MemorySlideMarkList}
-                  activeVal={getValues('memory')}
-                  setVal={(e) => {
-                    setValue('memory', MemorySlideMarkList[e].value);
-                  }}
-                  max={8}
-                  min={0}
-                  step={1}
-                />
-              </Flex>
-            </Box>
-          </Box>
+                      {errors.secret?.username && (
+                        <p className="text-sm text-red-500">{errors.secret.username.message}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-[100px_1fr] items-start gap-3">
+                    <Label className="text-sm font-medium text-zinc-900 h-10 flex items-center">
+                      {t('Password')}
+                    </Label>
+                    <div className="flex flex-col gap-1">
+                      <Input
+                        type="password"
+                        className={`max-w-[360px] h-10 placeholder:text-zinc-500 ${
+                          errors.secret?.password ? 'border-red-500' : ''
+                        }`}
+                        placeholder={`${t('Password for the image registry')}`}
+                        {...register('secret.password', {
+                          required: t('The password cannot be empty') || ''
+                        })}
+                      />
+                      {errors.secret?.password && (
+                        <p className="text-sm text-red-500">{errors.secret.password.message}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-[100px_1fr] items-start gap-3">
+                    <Label className="text-sm font-medium text-zinc-900 h-10 flex items-center">
+                      {t('Image Address')}
+                    </Label>
+                    <div className="flex flex-col gap-1">
+                      <Input
+                        className={`max-w-[360px] h-10 placeholder:text-zinc-500 ${
+                          errors.secret?.serverAddress ? 'border-red-500' : ''
+                        }`}
+                        placeholder={`${t('Image Address')}`}
+                        {...register('secret.serverAddress', {
+                          required: t('The image cannot be empty') || ''
+                        })}
+                      />
+                      {errors.secret?.serverAddress && (
+                        <p className="text-sm text-red-500">
+                          {errors.secret.serverAddress.message}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
-          {/* deploy mode */}
-          <Box id={'deployMode'} {...boxStyles}>
-            <Box {...headerStyles}>
-              <MyIcon name={'deployMode'} mr={5} w={'20px'} color={'myGray.500'} />
-              部署模式
-            </Box>
-            <Box px={'42px'} py={'24px'}>
-              <Tabs
-                w={'165px'}
-                size={'sm'}
-                list={[
-                  {
-                    label: '固定实例',
-                    id: `static`
-                  },
-                  {
-                    label: '弹性伸缩',
-                    id: `hpa`
-                  }
-                ]}
-                activeId={getValues('hpa.use') ? 'hpa' : 'static'}
-                onChange={(val) => {
-                  if (val === 'static') {
-                    setValue('hpa.use', false);
-                  } else {
-                    setValue('hpa.use', true);
-                  }
-                }}
-              />
-              <Box mt={6} pl={10} borderLeft={'2px solid'} borderLeftColor={'myGray.100'}>
-                {getValues('hpa.use') ? (
-                  <>
-                    <Flex alignItems={'center'}>
-                      <MySelect
-                        width={'130px'}
-                        placeholder="hpa对象"
+          {/* Usage Card */}
+          <Card className="driver-deploy-instance">
+            <CardHeader className="pt-8 px-8 pb-5 bg-transparent gap-0">
+              <CardTitle className="text-xl font-medium text-zinc-900">{t('Usage')}</CardTitle>
+            </CardHeader>
+            <CardContent className="px-8 pb-8 space-y-4">
+              {/* Fixed/Scaling Toggle */}
+              <RadioGroup
+                value={getValues('hpa.use') ? 'hpa' : 'static'}
+                onValueChange={(val) => setValue('hpa.use', val === 'hpa')}
+                className="flex gap-3"
+              >
+                <label
+                  className={`min-w-[150px] h-10 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-all ${
+                    !getValues('hpa.use')
+                      ? 'border-zinc-900 bg-white'
+                      : 'border-zinc-200 bg-white hover:bg-zinc-50 '
+                  }`}
+                >
+                  <RadioGroupItem value="static" />
+                  <span className="text-sm font-medium">{t('Fixed instance')}</span>
+                </label>
+                <label
+                  className={`min-w-[150px] h-10 flex items-center gap-2 p-3 rounded-lg border cursor-pointer transition-all ${
+                    getValues('hpa.use')
+                      ? 'border-zinc-900 bg-white'
+                      : 'border-zinc-200 bg-white hover:bg-zinc-50'
+                  }`}
+                >
+                  <RadioGroupItem value="hpa" />
+                  <span className="text-sm font-medium">{t('Auto scaling')}</span>
+                </label>
+              </RadioGroup>
+
+              {getValues('hpa.use') ? (
+                <>
+                  {/* HPA Mode */}
+                  <div className="grid grid-cols-[100px_1fr] items-center gap-3">
+                    <Label className="text-sm font-medium text-zinc-900">{t('Target')}</Label>
+                    <div className="flex items-center gap-3">
+                      <Select
                         value={getValues('hpa.target')}
-                        list={[
-                          { id: 'cpu', label: 'CPU目标值' },
-                          { id: 'memory', label: '内存目标值' }
-                        ]}
-                        onchange={(val: any) => setValue('hpa.target', val)}
-                      />
+                        onValueChange={(val) => setValue('hpa.target', val as 'cpu' | 'memory')}
+                      >
+                        <SelectTrigger className="min-w-[150px] h-10 text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cpu">{t('CPU')}</SelectItem>
+                          <SelectItem value="memory">{t('Memory')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <div className="relative w-[100px]">
+                        <Input
+                          type="number"
+                          className={`h-10 pr-8 ${
+                            getValues('hpa.target') === 'gpu' ? 'pr-0' : 'pr-8'
+                          }`}
+                          {...register('hpa.value', {
+                            required: t('The Cpu target is empty') || '',
+                            valueAsNumber: true,
+                            min: {
+                              value: 1,
+                              message: t('The cpu target value must be positive')
+                            },
+                            max: {
+                              value: 100,
+                              message: t('The target cpu value must be less than 100')
+                            }
+                          })}
+                        />
+                        {getValues('hpa.target') !== 'gpu' && (
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">
+                            %
+                          </span>
+                        )}
+                      </div>
+                      <p className="ml-1 text-sm text-zinc-500">
+                        {t('CPU target is the CPU utilization rate of any container')}
+                      </p>
+                    </div>
+                  </div>
 
-                      <Input
-                        type={'number'}
-                        backgroundColor={getValues('hpa.value') ? 'myWhite.500' : 'myWhite.400'}
-                        mx={2}
-                        w={'80px'}
-                        {...register('hpa.value', {
-                          required: 'cpu目标值为空',
-                          valueAsNumber: true,
-                          min: {
-                            value: 1,
-                            message: 'cpu目标值需为正数'
-                          },
-                          max: {
-                            value: 100,
-                            message: 'cpu目标值需在100内'
+                  <div className="grid grid-cols-[100px_1fr] items-center gap-3">
+                    <Label className="text-sm font-medium text-zinc-900">{t('Replicas')}</Label>
+                    <div className="flex items-center gap-3">
+                      {/* Min Replicas */}
+                      <div className="flex items-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = getValues('hpa.minReplicas') || 1;
+                            if (current > 1) setValue('hpa.minReplicas', current - 1);
+                          }}
+                          disabled={(getValues('hpa.minReplicas') || 1) <= 1}
+                          className="w-10 h-10 flex items-center justify-center border rounded-l-lg bg-white hover:bg-zinc-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Minus className="w-4 h-4 text-muted-foreground" />
+                        </button>
+                        <div className="w-12 h-10 flex items-center justify-center border-t border-b border-zinc-200 bg-white text-sm font-medium">
+                          {getValues('hpa.minReplicas') || 1}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = getValues('hpa.minReplicas') || 1;
+                            const max = getValues('hpa.maxReplicas') || 2;
+                            if (current < max) setValue('hpa.minReplicas', current + 1);
+                          }}
+                          disabled={
+                            (getValues('hpa.minReplicas') || 1) >=
+                            (getValues('hpa.maxReplicas') || 2)
                           }
-                        })}
-                      />
-                      <Box>%</Box>
-                      <Tip
-                        ml={4}
-                        icon={<InfoOutlineIcon />}
-                        text="CPU 目标值为任一容器的 CPU 利用率"
-                        size="sm"
-                      />
-                    </Flex>
+                          className="w-10 h-10 flex items-center justify-center border rounded-r-lg bg-white hover:bg-zinc-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Plus className="w-4 h-4 text-muted-foreground" />
+                        </button>
+                      </div>
+                      <span className="text-zinc-500">~</span>
+                      {/* Max Replicas */}
+                      <div className="flex items-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = getValues('hpa.maxReplicas') || 2;
+                            const min = getValues('hpa.minReplicas') || 1;
+                            if (current > min) setValue('hpa.maxReplicas', current - 1);
+                          }}
+                          disabled={
+                            (getValues('hpa.maxReplicas') || 2) <=
+                            (getValues('hpa.minReplicas') || 1)
+                          }
+                          className="w-10 h-10 flex items-center justify-center border rounded-l-lg bg-white hover:bg-zinc-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Minus className="w-4 h-4 text-muted-foreground" />
+                        </button>
+                        <div className="w-12 h-10 flex items-center justify-center border-t border-b border-zinc-200 bg-white text-sm font-medium">
+                          {getValues('hpa.maxReplicas') || 2}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = getValues('hpa.maxReplicas') || 2;
+                            if (current < 20) setValue('hpa.maxReplicas', current + 1);
+                          }}
+                          disabled={(getValues('hpa.maxReplicas') || 2) >= 20}
+                          className="w-10 h-10 flex items-center justify-center border rounded-r-lg bg-white hover:bg-zinc-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Plus className="w-4 h-4 text-muted-foreground" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                /* Fixed Mode - Replicas with +/- buttons */
+                <div className="grid grid-cols-[100px_1fr] items-center gap-3">
+                  <Label className="text-sm font-medium text-zinc-900">{t('Replicas')}</Label>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center w-min">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const current = getValues('replicas') || 1;
+                              if (current > 1) setValue('replicas', current - 1);
+                            }}
+                            disabled={(getValues('replicas') || 1) <= 1}
+                            className="w-10 h-10 flex items-center justify-center border rounded-l-lg bg-white hover:bg-zinc-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Minus className="w-4 h-4 text-muted-foreground" />
+                          </button>
+                          <div className="w-20 h-10 flex items-center justify-center border-t border-b border-zinc-200 bg-white text-sm font-medium">
+                            {getValues('replicas') || 1}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const current = getValues('replicas') || 1;
+                              if (current < 20) setValue('replicas', current + 1);
+                            }}
+                            disabled={(getValues('replicas') || 1) >= 20}
+                            className="w-10 h-10 flex items-center justify-center border rounded-r-lg bg-white hover:bg-zinc-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Plus className="w-4 h-4 text-muted-foreground" />
+                          </button>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="rounded-xl">
+                        <p className="text-sm text-zinc-900 font-normal p-2">
+                          {`${t('Replicas Range')}: 1~20`}
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              )}
 
-                    <Flex mt={5} pb={5} pr={3} alignItems={'center'}>
-                      <Label w={100}>实例数</Label>
-                      <MyRangeSlider
-                        min={1}
-                        max={20}
-                        step={1}
-                        value={[getValues('hpa.minReplicas'), getValues('hpa.maxReplicas')]}
-                        setVal={(e) => {
-                          setValue('hpa.minReplicas', e[0]);
-                          setValue('hpa.maxReplicas', e[1]);
-                        }}
-                      />
-                    </Flex>
-                  </>
-                ) : (
-                  <Flex alignItems={'center'}>
-                    <Label>实例数</Label>
-                    <RangeInput
-                      value={getValues('replicas')}
-                      min={1}
-                      max={20}
-                      hoverText="实例数范围：1~20"
-                      setVal={(val) => {
-                        register('replicas', {
-                          required: '实例数不能为空',
-                          min: {
-                            value: 1,
-                            message: '实例数最小为1'
-                          },
-                          max: {
-                            value: 20,
-                            message: '实例数最大为20'
-                          }
-                        });
-                        setValue('replicas', val || '');
+              {/* GPU (if available) */}
+              {userSourcePrice?.gpu && (
+                <>
+                  <div className="grid grid-cols-[100px_1fr] items-center gap-3">
+                    <Label className="text-sm font-medium text-zinc-900">GPU</Label>
+                    <Select
+                      value={getValues('gpu.type') || 'none'}
+                      onValueChange={(type) => {
+                        const actualType = type === 'none' ? '' : type;
+                        const selected = userSourcePrice?.gpu?.find(
+                          (item) => item.type === actualType
+                        );
+                        const inventory = countGpuInventory(actualType);
+                        if (actualType === '' || (selected && inventory > 0)) {
+                          setValue('gpu.type', actualType);
+                          const sliderList = countSliderList();
+                          setValue('cpu', cpuMillicoresToQuantity(sliderList.cpu[1].value));
+                          setValue('memory', memoryMiToQuantity(sliderList.memory[1].value));
+                        }
                       }}
-                    />
-                  </Flex>
-                )}
-              </Box>
-            </Box>
-          </Box>
+                    >
+                      <SelectTrigger className="w-[400px] h-10 rounded-lg pl-2">
+                        <SelectValue placeholder={t('No GPU') || ''} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {gpuSelectList.map((item) => (
+                          <SelectItem key={item.value || 'none'} value={item.value || 'none'}>
+                            {item.value === '' ? (
+                              <span>{t('No GPU')}</span>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-[6px] rounded-md bg-zinc-100 px-2 py-1">
+                                  {item.alias.toLowerCase().startsWith('nvidia') && (
+                                    <MyIcon name="nvidiaGreen" w="16px" h="16px" color="#10B981" />
+                                  )}
+                                  <span className="text-zinc-900 font-medium">{item.alias}</span>
+                                </div>
+                                <span className="text-zinc-900">
+                                  {t('vm')}: {item.vm}G
+                                </span>
+                                <span className="text-zinc-200">|</span>
+                                <span className="text-zinc-900">
+                                  {t('Inventory')}:{' '}
+                                  <span className="text-yellow-600">{item.inventory}</span>
+                                </span>
+                              </div>
+                            )}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    {!!getValues('gpu.type') && (
+                      <>
+                        <div></div>
+                        <div className="flex flex-col gap-2">
+                          <Label className="text-sm font-medium text-zinc-900">{t('Amount')}</Label>
+                          <div className="flex items-center gap-2">
+                            {GpuAmountMarkList.map((item) => {
+                              const inventory = selectedGpu?.inventory || 0;
+                              const hasInventory = item.value <= inventory;
+
+                              return (
+                                <TooltipProvider key={item.value}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <button
+                                        type="button"
+                                        disabled={!hasInventory}
+                                        onClick={() => {
+                                          setValue('gpu.amount', item.value);
+                                          const sliderList = countSliderList();
+                                          setValue(
+                                            'cpu',
+                                            cpuMillicoresToQuantity(sliderList.cpu[1].value)
+                                          );
+                                          setValue(
+                                            'memory',
+                                            memoryMiToQuantity(sliderList.memory[1].value)
+                                          );
+                                        }}
+                                        className={`w-10 h-10 rounded-lg border text-sm font-normal transition-all ${
+                                          getValues('gpu.amount') === item.value
+                                            ? 'border-zinc-900 bg-white'
+                                            : 'border-zinc-200 bg-white'
+                                        } ${
+                                          !hasInventory
+                                            ? 'opacity-50 cursor-not-allowed'
+                                            : 'cursor-pointer hover:bg-zinc-50'
+                                        }`}
+                                      >
+                                        {item.label}
+                                      </button>
+                                    </TooltipTrigger>
+                                    {!hasInventory && (
+                                      <TooltipContent>
+                                        <p>{t('Under Stock')}</p>
+                                      </TooltipContent>
+                                    )}
+                                  </Tooltip>
+                                </TooltipProvider>
+                              );
+                            })}
+                            {/* <span className="ml-2 text-zinc-500">/ {t('Card')}</span> */}
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {exceededQuotas.some(({ type }) => type === 'gpu') && (
+                      <p className="ml-[112px] text-sm text-red-500 col-span-full">
+                        {t('gpu_exceeds_quota', {
+                          requested: getValues('gpu.amount') || 0,
+                          limit: exceededQuotas.find(({ type }) => type === 'gpu')?.limit ?? 0,
+                          used: exceededQuotas.find(({ type }) => type === 'gpu')?.used ?? 0
+                        })}
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* CPU */}
+              <div className="grid grid-cols-[100px_1fr] items-start gap-3 pt-3">
+                <Label className="text-sm font-medium text-zinc-900">{t('CPU')}</Label>
+                <div className="flex-1 flex flex-col gap-3 px-1">
+                  <Slider
+                    value={[
+                      SliderList.cpu.findIndex((item) => item.value === getCpuMillicores()) ?? 0
+                    ]}
+                    onValueChange={([val]) =>
+                      setValue('cpu', cpuMillicoresToQuantity(SliderList.cpu[val].value))
+                    }
+                    max={SliderList.cpu.length - 1}
+                    min={0}
+                    step={1}
+                  />
+                  <div className="relative h-4 text-xs text-zinc-500 mx-2">
+                    {SliderList.cpu.map((item, i) => (
+                      <span
+                        key={i}
+                        onClick={() => setValue('cpu', cpuMillicoresToQuantity(item.value))}
+                        className={`absolute w-10 text-center -translate-x-1/2 cursor-pointer hover:text-zinc-700 ${
+                          getCpuMillicores() === item.value ? 'text-zinc-900 font-medium' : ''
+                        }`}
+                        style={{
+                          left:
+                            i === 0
+                              ? '1%'
+                              : i === SliderList.cpu.length - 1
+                              ? '99%'
+                              : `${(i / (SliderList.cpu.length - 1)) * 100}%`
+                        }}
+                      >
+                        {item.label}
+                      </span>
+                    ))}
+                  </div>
+                  {exceededQuotas.some(({ type }) => type === 'cpu') && (
+                    <p className="text-sm text-red-500">
+                      {t('cpu_exceeds_quota', {
+                        requested: getCpuMillicores() / resourcePropertyMap.cpu.scale,
+                        limit:
+                          (exceededQuotas.find(({ type }) => type === 'cpu')?.limit ?? 0) /
+                          resourcePropertyMap.cpu.scale,
+                        used:
+                          (exceededQuotas.find(({ type }) => type === 'cpu')?.used ?? 0) /
+                          resourcePropertyMap.cpu.scale
+                      })}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Memory */}
+              <div className="grid grid-cols-[100px_1fr] items-start gap-3 pt-2">
+                <Label className="text-sm font-medium text-zinc-900">{t('Memory')}</Label>
+                <div className="flex-1 flex flex-col gap-3 px-1">
+                  <Slider
+                    value={[
+                      SliderList.memory.findIndex((item) => item.value === getMemoryMi()) ?? 0
+                    ]}
+                    onValueChange={([val]) =>
+                      setValue('memory', memoryMiToQuantity(SliderList.memory[val].value))
+                    }
+                    max={SliderList.memory.length - 1}
+                    min={0}
+                    step={1}
+                  />
+                  <div className="relative h-4 text-xs text-zinc-500 mx-2">
+                    {SliderList.memory.map((item, i) => (
+                      <span
+                        key={i}
+                        onClick={() => setValue('memory', memoryMiToQuantity(item.value))}
+                        className={`absolute w-10 text-center -translate-x-1/2 cursor-pointer hover:text-zinc-700 ${
+                          getMemoryMi() === item.value ? 'text-zinc-900 font-medium' : ''
+                        }`}
+                        style={{
+                          left:
+                            i === 0
+                              ? '1%'
+                              : i === SliderList.memory.length - 1
+                              ? '99%'
+                              : `${(i / (SliderList.memory.length - 1)) * 100}%`
+                        }}
+                      >
+                        {item.label}
+                      </span>
+                    ))}
+                  </div>
+                  {exceededQuotas.some(({ type }) => type === 'memory') && (
+                    <p className="text-sm text-red-500">
+                      {t('memory_exceeds_quota', {
+                        requested: getMemoryMi() / resourcePropertyMap.memory.scale,
+                        limit:
+                          (exceededQuotas.find(({ type }) => type === 'memory')?.limit ?? 0) /
+                          resourcePropertyMap.memory.scale,
+                        used:
+                          (exceededQuotas.find(({ type }) => type === 'memory')?.used ?? 0) /
+                          resourcePropertyMap.memory.scale
+                      })}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* network */}
-          <Box id={'network'} {...boxStyles}>
-            <Box {...headerStyles}>
-              <MyIcon name={'network'} mr={5} w={'20px'} color={'myGray.500'} />
-              网络配置
-            </Box>
-            <Box px={'42px'} py={'24px'}>
-              <FormControl mb={5}>
-                <Flex alignItems={'center'}>
-                  <Box flex={'0 0 100px'}>容器暴露端口</Box>
-                  <Input
-                    type={'number'}
-                    bg={getValues('containerOutPort') ? 'myWhite.500' : 'myWhite.400'}
-                    w={'100px'}
-                    {...register('containerOutPort', {
-                      required: '容器暴露端口不能为空',
-                      valueAsNumber: true,
-                      min: {
-                        value: 1,
-                        message: '暴露端口需要为正数'
-                      }
-                    })}
-                  />
-                </Flex>
-              </FormControl>
-              <Box>
-                <Flex mb={5}>
-                  <Box fontWeight={'bold'} mr={4}>
-                    外网访问
-                  </Box>
-                  <Switch
-                    size={'lg'}
-                    colorScheme={'blackAlpha'}
-                    isChecked={getValues('accessExternal.use')}
-                    {...register('accessExternal.use', {
-                      onChange: () => {
-                        // first open, add init data
-                        if (!getValues('accessExternal.outDomain')) {
-                          setValue('accessExternal', {
-                            use: true,
-                            backendProtocol: 'HTTP',
-                            outDomain: nanoid(),
-                            selfDomain: ''
-                          });
-                        }
-                      }
-                    })}
-                  />
-                </Flex>
-                {getValues('accessExternal.use') && (
-                  <Box pl={10} borderLeft={theme.borders.base}>
-                    <FormControl mt={5}>
-                      <Flex alignItems={'center'}>
-                        <Box flex={'0 0 80px'}>协议</Box>
-                        <MySelect
-                          width={'120px'}
-                          value={getValues('accessExternal.backendProtocol')}
-                          list={[
-                            { id: 'HTTP', label: 'https' },
-                            { id: 'GRPC', label: 'grpcs' },
-                            { id: 'WS', label: 'websocket' }
-                          ]}
-                          onchange={(val: any) => setValue('accessExternal.backendProtocol', val)}
-                        />
-                      </Flex>
-                    </FormControl>
-                    <FormControl mt={5}>
-                      <Flex alignItems={'center'} color={'myGray.500'}>
-                        <Box flex={'0 0 80px'}>出口域名</Box>
-                        <Box userSelect={'all'}>
-                          {getValues('accessExternal.outDomain')}.{SEALOS_DOMAIN}
-                        </Box>
-                      </Flex>
-                    </FormControl>
-                    <FormControl mt={5}>
-                      <Flex alignItems={'center'}>
-                        <Box flex={'0 0 80px'}>自定义域名</Box>
-                        <Input
-                          w={'320px'}
-                          bg={
-                            getValues('accessExternal.selfDomain') ? 'myWhite.500' : 'myWhite.400'
-                          }
-                          placeholder="custom domain"
-                          {...register('accessExternal.selfDomain')}
-                        />
-                      </Flex>
-                    </FormControl>
-                    {!!getValues('accessExternal.selfDomain') && (
-                      <Flex>
-                        <Tip
-                          mt={3}
-                          size={'sm'}
-                          icon={<InfoOutlineIcon />}
-                          text={`请将您的自定义域名 cname 到 ${getValues(
-                            'accessExternal.outDomain'
-                          )}.${SEALOS_DOMAIN}`}
-                        />
-                      </Flex>
-                    )}
-                  </Box>
-                )}
-              </Box>
-            </Box>
-          </Box>
+          <NetworkSection
+            formHook={formHook}
+            exceededQuotas={exceededQuotas}
+            onDomainVerified={onDomainVerified}
+            handleOpenCostcenter={handleOpenCostcenter}
+          />
+
           {/* settings */}
           {already && (
-            <Accordion
-              id={'settings'}
-              allowToggle
-              defaultIndex={navList[3].isSetting ? 0 : undefined}
-            >
-              <AccordionItem {...boxStyles}>
-                <AccordionButton
-                  {...headerStyles}
-                  justifyContent={'space-between'}
-                  _hover={{ bg: '' }}
-                >
-                  <Flex alignItems={'center'}>
-                    <MyIcon name={'settings'} mr={5} w={'20px'} color={'myGray.500'} />
-                    <Box>高级配置</Box>
-                    <Box
-                      bg={'myGray.100'}
-                      w={'46px'}
-                      h={'28px'}
-                      lineHeight={'28px'}
-                      ml={3}
-                      fontSize={'sm'}
-                      borderRadius={'20px'}
-                      color={'myGray.600'}
-                    >
-                      选填
-                    </Box>
-                  </Flex>
-                  <AccordionIcon w={'1.3em'} h={'1.3em'} color={'myGray.700'} />
-                </AccordionButton>
+            <Card id="settings" className="w-full min-w-0">
+              <CardHeader className="pt-8 px-8 pb-6 bg-transparent gap-0">
+                <div className="flex items-center gap-3">
+                  <CardTitle className="text-xl font-medium text-zinc-900">
+                    {t('Advanced Configuration')}
+                  </CardTitle>
+                  <span className="px-3 py-1 text-xs font-medium text-zinc-600 bg-zinc-50 border border-zinc-200 rounded-full">
+                    {t('Option')}
+                  </span>
+                </div>
+              </CardHeader>
+              <CardContent className="px-8 pb-8 min-w-0">
+                {/* Command Section */}
+                <div id="settings-command" className="min-w-0">
+                  <div className="flex flex-col gap-1 mb-3">
+                    <h3 className="text-base font-medium leading-none text-zinc-900">
+                      {t('Command')}
+                    </h3>
+                    <p className="text-sm font-normal text-zinc-500">
+                      {t('If no, the default command is used')}
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-[100px_1fr] items-center gap-3 driver-deploy-command">
+                      <Label className="text-sm font-medium leading-none text-zinc-900">
+                        {t('Command')}
+                      </Label>
+                      <Input
+                        className="max-w-[400px] h-10"
+                        placeholder={`${t('Such as')} /bin/bash -c`}
+                        {...register('runCMD')}
+                      />
+                    </div>
+                    <div className="grid grid-cols-[100px_1fr] items-center gap-3">
+                      <Label className="text-sm font-medium leading-none text-zinc-900">
+                        {t('Arguments')}
+                      </Label>
+                      <Input
+                        className="max-w-[400px] h-10"
+                        placeholder={`${t('Such as')} sleep 10 && /entrypoint.sh db createdb`}
+                        {...register('cmdParam')}
+                      />
+                    </div>
+                  </div>
+                </div>
 
-                <AccordionPanel px={'42px'} py={'24px'}>
-                  <FormControl mb={5}>
-                    <Box mb={3}>运行命令</Box>
-                    <Input
-                      w={'320px'}
-                      bg={getValues('runCMD') ? 'myWhite.500' : 'myWhite.400'}
-                      placeholder="空格分开,如: /bin/bash -c"
-                      {...register('runCMD')}
-                    />
-                  </FormControl>
-                  <FormControl>
-                    <Box mb={3}>命令参数</Box>
-                    <Input
-                      w={'320px'}
-                      bg={getValues('cmdParam') ? 'myWhite.500' : 'myWhite.400'}
-                      placeholder="空格分开,如: HOSTNAME PORT"
-                      {...register('cmdParam')}
-                    />
-                  </FormControl>
+                <Separator className="bg-transparent border-t border-dashed border-zinc-200 my-4" />
 
-                  <Divider my={'24px'} bg={'myGray.100'} />
-
-                  <Box w={'320px'}>
-                    <Box className={styles.formSecondTitle}>环境变量</Box>
-                    <table className={styles.table}>
-                      <tbody>
-                        {envs.map((env) => (
-                          <tr key={env.id}>
-                            <th>{env.key}</th>
-                            <Tooltip label={env.value}>
-                              <th
-                                className={styles.textEllipsis}
-                                style={{
-                                  userSelect: 'auto'
-                                }}
-                              >
-                                {env.value}
-                              </th>
-                            </Tooltip>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                {/* Environment Variables Section */}
+                <div id="settings-envs" className="flex flex-col gap-3 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-medium leading-none text-zinc-900">
+                      {t('Environment Variables')}
+                    </h3>
                     <Button
-                      mt={4}
-                      w={'100%'}
-                      variant={'base'}
-                      leftIcon={<MyIcon name="edit" />}
+                      type="button"
+                      variant="outline"
+                      className="h-10 min-w-[86px] shadow-none hover:bg-zinc-50"
                       onClick={onOpenEditEnvs}
                     >
-                      编辑环境变量
+                      <Plus className="w-4 h-4" />
+                      {getFieldActionText(envs.length > 0)}
                     </Button>
-                  </Box>
+                  </div>
+                  {envs.length > 0 && (
+                    <div className="border border-zinc-200 rounded-lg overflow-hidden">
+                      <Table className="table-fixed w-full [&_th]:border-b [&_th]:border-r [&_th:last-child]:border-r-0 [&_td]:border-b [&_td]:border-r [&_td:last-child]:border-r-0 [&_tr:last-child_td]:border-b-0 [&_tbody_tr:nth-child(even)]:bg-zinc-50">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-[200px] max-w-[200px] h-auto py-2 font-semibold text-zinc-500 bg-zinc-50">
+                              {t('Key')}
+                            </TableHead>
+                            <TableHead className="h-auto py-2 font-semibold text-zinc-500 bg-zinc-50">
+                              {t('Value')}
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {envs.map((env) => {
+                            const valText = env.value
+                              ? env.value
+                              : env.valueFrom
+                              ? 'value from | ***'
+                              : '';
+                            return (
+                              <TableRow key={env.id}>
+                                <TableCell className="w-[200px] max-w-[200px] text-sm font-normal text-zinc-900">
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className="text-sm text-zinc-900 font-normal truncate block cursor-default">
+                                          {env.key}
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="bottom" className="rounded-xl">
+                                        <p className="max-w-xs break-all">{env.key}</p>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                </TableCell>
+                                <TableCell>
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className="text-sm text-zinc-900 font-normal truncate block cursor-default truncate">
+                                          {valText}
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="bottom" className="rounded-xl">
+                                        <p className="max-w-xs whitespace-pre-wrap break-words">
+                                          {valText}
+                                        </p>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </div>
 
-                  <Divider my={'24px'} bg={'myGray.100'} />
+                <Separator className="bg-transparent border-t border-dashed border-zinc-200 my-4" />
 
-                  <Box>
-                    <Box className={styles.formSecondTitle}>Configmap 配置文件</Box>
-                    {configMaps.map((item, index) => (
-                      <Flex key={item.id} _notLast={{ mb: 5 }} alignItems={'center'}>
-                        <Flex
-                          alignItems={'center'}
-                          px={4}
-                          py={1}
-                          border={theme.borders.base}
-                          flex={'0 0 320px'}
-                          w={0}
-                          borderRadius={'sm'}
-                          cursor={'pointer'}
-                          onClick={() => setConfigEdit(item)}
-                          bg={'myWhite.300'}
-                        >
-                          <MyIcon name={'configMap'} />
-                          <Box ml={4} flex={'1 0 0'} w={0}>
-                            <Box color={'myGray.900'} fontWeight={'bold'}>
-                              {item.mountPath}
-                            </Box>
-                            <Box
-                              className={styles.textEllipsis}
-                              color={'myGray.500'}
-                              fontSize={'sm'}
-                            >
-                              {item.value}
-                            </Box>
-                          </Box>
-                        </Flex>
-                        <Box
-                          className={styles.deleteIcon}
-                          ml={3}
-                          cursor={'pointer'}
-                          onClick={() => removeConfigMaps(index)}
-                        >
-                          <MyIcon name="delete" w={'16px'} h={'16px'} />
-                        </Box>
-                      </Flex>
-                    ))}
-
+                {/* Configmaps Section */}
+                <div id="settings-configmaps" className="flex flex-col gap-3 w-full min-w-0">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-medium text-zinc-900">{t('Configmaps')}</h3>
                     <Button
-                      mt={3}
-                      onClick={() => setConfigEdit({ mountPath: '', value: '' })}
-                      variant={'base'}
-                      leftIcon={<MyIcon name="plus" />}
-                      w={'320px'}
+                      type="button"
+                      variant="outline"
+                      className="h-10 min-w-[86px] shadow-none hover:bg-zinc-50"
+                      onClick={() =>
+                        setConfigEdit({ mountPath: '', value: '', key: '', volumeName: '' })
+                      }
                     >
-                      新增 configmap
+                      <Plus className="w-4 h-4" />
+                      {getFieldActionText(configMaps.length > 0)}
                     </Button>
-                  </Box>
+                  </div>
+                  {configMaps.length > 0 && (
+                    <div className="space-y-1 w-full min-w-0">
+                      {configMaps.map((item, index) => (
+                        <div
+                          key={item.id}
+                          className="flex items-center gap-3 p-3 bg-zinc-50 rounded-lg cursor-pointer hover:bg-zinc-100 transition-colors w-full min-w-0 overflow-hidden"
+                          onClick={() => setConfigEdit(item)}
+                        >
+                          <MyIcon
+                            name="configMapColor"
+                            w="24px"
+                            h="24px"
+                            color="#a1a1aa"
+                            className="shrink-0"
+                          />
+                          <div className="flex-1 min-w-0 overflow-hidden">
+                            <p className="text-sm font-medium text-zinc-900 truncate block w-full">
+                              {item.mountPath}
+                            </p>
+                            <p className="text-xs text-neutral-500 truncate block w-full">
+                              {item.value}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 text-neutral-500 hover:text-red-600 hover:bg-transparent"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeConfigMaps(index);
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-                  <Divider my={'24px'} bg={'myGray.100'} />
+                <Separator className="bg-transparent border-t border-dashed border-zinc-200 my-4" />
 
-                  <Box>
-                    <Flex alignItems={'center'} mb={'10px'}>
-                      <Box className={styles.formSecondTitle} m={0}>
-                        本地存储
-                      </Box>
-                      <Tip
-                        ml={4}
-                        icon={<InfoOutlineIcon />}
-                        size="sm"
-                        text="多个实例间数据不互通"
-                      />
-                    </Flex>
-                    {storeList.map((item, index) => (
-                      <Flex key={item.id} _notLast={{ mb: 5 }} alignItems={'center'}>
-                        <Flex
-                          alignItems={'center'}
-                          px={4}
-                          py={1}
-                          border={theme.borders.base}
-                          flex={'0 0 320px'}
-                          w={0}
-                          borderRadius={'sm'}
-                          cursor={'pointer'}
-                          bg={'myWhite.300'}
+                {/* Local Storage Section */}
+                <div id="settings-storage" className="driver-deploy-storage min-w-0">
+                  <div
+                    className={`flex items-center justify-between ${
+                      storeList.length > 0 || persistentVolumes.length > 0 ? 'mb-4' : 'mb-2'
+                    }`}
+                  >
+                    <div className="flex flex-col gap-1">
+                      <h3 className="text-base font-medium leading-none text-zinc-900">
+                        {t('Local Storage')}
+                      </h3>
+                      <p className="text-sm font-normal text-zinc-500">
+                        {t('Data cannot be communicated between multiple instances')}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 min-w-[86px] shadow-none hover:bg-zinc-50"
+                      onClick={() =>
+                        setStoreEdit({ name: '', path: '', value: storageGiToQuantity(1) })
+                      }
+                    >
+                      <Plus className="w-4 h-4" />
+                      {t('Add')}
+                    </Button>
+                  </div>
+                  {(storeList.length > 0 || persistentVolumes.length > 0) && (
+                    <div className="space-y-1 min-w-0">
+                      {storeList.map((item, index) => (
+                        <div
+                          key={item.id}
+                          className="flex items-center gap-3 p-3 bg-zinc-50 rounded-lg cursor-pointer hover:bg-zinc-100 transition-colors w-full min-w-0 overflow-hidden"
                           onClick={() => setStoreEdit(item)}
                         >
-                          <MyIcon name={'store'} />
-                          <Box ml={4} flex={'1 0 0'} w={0}>
-                            <Box color={'myGray.900'} fontWeight={'bold'}>
+                          <MyIcon
+                            name="storeColor"
+                            w="24px"
+                            h="24px"
+                            color="#a1a1aa"
+                            className="shrink-0"
+                          />
+                          <div className="flex-1 min-w-0 overflow-hidden">
+                            <p className="text-sm font-medium text-zinc-900 truncate block w-full">
                               {item.path}
-                            </Box>
-                            <Box
-                              className={styles.textEllipsis}
-                              color={'myGray.500'}
-                              fontSize={'sm'}
-                            >
-                              {item.value} Gi
-                            </Box>
-                          </Box>
-                        </Flex>
-                        <Box
-                          className={styles.deleteIcon}
-                          ml={3}
-                          cursor={'pointer'}
-                          onClick={() => removeStoreList(index)}
+                            </p>
+                            <p className="text-xs text-neutral-500 truncate block w-full">
+                              {item.value.formatForDisplay({
+                                format: 'BinarySI',
+                                scale: 'auto',
+                                digits: 4
+                              })}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 text-neutral-500 hover:text-red-600 hover:bg-transparent"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (existingStores.length > 0 && storeList.length === 1) {
+                                toast.error(t('Store At Least One'));
+                              } else {
+                                removeStoreList(index);
+                              }
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))}
+                      {persistentVolumes.map((item) => (
+                        <div
+                          key={item.path}
+                          className="flex items-center gap-3 p-3 bg-zinc-50 rounded-lg cursor-not-allowed opacity-70 w-full min-w-0 overflow-hidden"
                         >
-                          <MyIcon name="delete" w={'16px'} h={'16px'} />
-                        </Box>
-                      </Flex>
-                    ))}
-
-                    <Button
-                      mt={3}
-                      onClick={() => setStoreEdit({ path: '', value: 1 })}
-                      variant={'base'}
-                      leftIcon={<MyIcon name="plus" />}
-                      w={'320px'}
-                    >
-                      新增存储卷
-                    </Button>
-                  </Box>
-                </AccordionPanel>
-              </AccordionItem>
-            </Accordion>
+                          <MyIcon
+                            name="storeColor"
+                            w="24px"
+                            h="24px"
+                            color="#a1a1aa"
+                            className="shrink-0"
+                          />
+                          <div className="flex-1 min-w-0 overflow-hidden">
+                            <p className="text-sm font-medium text-zinc-900 truncate block w-full">
+                              {item.path}
+                            </p>
+                          </div>
+                          <span className="text-xs text-neutral-500">{t('shared')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           )}
-        </Box>
-      </Grid>
+        </div>
+      </div>
+
       {isEditEnvs && (
-        <EditEnvs
-          defaultVal={envs.map((item) => `${item.key}=${item.value}`).join('\n')}
-          onClose={onCloseEditEnvs}
-          successCb={(e) => replaceEnvs(e)}
-        />
+        <EditEnvs defaultEnv={envs} onClose={onCloseEditEnvs} successCb={(e) => replaceEnvs(e)} />
       )}
       {configEdit && (
         <ConfigmapModal
@@ -858,14 +1387,22 @@ const Form = ({
             .map((item) => item.mountPath.toLocaleLowerCase())}
           successCb={(e) => {
             if (!e.id) {
-              appendConfigMaps(e);
+              appendConfigMaps({
+                ...e,
+                key: mountPathToConfigMapKey(e.mountPath),
+                volumeName: getValues('appName') + '-cm'
+              });
             } else {
               setValue(
                 'configMapList',
-                configMaps.map((item) => ({
-                  mountPath: item.id === e.id ? e.mountPath : item.mountPath,
-                  value: item.id === e.id ? e.value : item.value
-                }))
+                configMaps.map((item) => {
+                  return {
+                    mountPath: item.id === e.id ? e.mountPath : item.mountPath,
+                    value: item.id === e.id ? e.value : item.value,
+                    key: item.id === e.id ? e.key : item.key,
+                    volumeName: item.id === e.id ? e.volumeName : item.volumeName
+                  };
+                })
               );
             }
             setConfigEdit(undefined);
@@ -876,7 +1413,22 @@ const Form = ({
       {storeEdit && (
         <StoreModal
           defaultValue={storeEdit}
-          isEditStore={defaultStorePathList.includes(storeEdit.path)}
+          isEditStore={!!existingStores.find((item) => storeEdit.path === item.path)}
+          minValue={
+            quantityToStorageGi(
+              existingStores.find((item) => storeEdit.path === item.path)?.value ??
+                storageGiToQuantity(1)
+            ) || 1
+          }
+          maxValue={Math.min(
+            // left quota - this one
+            storageQuotaLeft +
+              quantityToStorageGi(
+                storeList.find((item) => item.id === storeEdit.id)?.value ?? storageGiToQuantity(0)
+              ),
+            // But not exceed the size cap
+            config.pvcStorageMax
+          )}
           listNames={storeList
             .filter((item) => item.id !== storeEdit.id)
             .map((item) => item.path.toLocaleLowerCase())}
@@ -887,6 +1439,7 @@ const Form = ({
               setValue(
                 'storeList',
                 storeList.map((item) => ({
+                  name: item.id === e.id ? e.name : item.name,
                   path: item.id === e.id ? e.path : item.path,
                   value: item.id === e.id ? e.value : item.value
                 }))

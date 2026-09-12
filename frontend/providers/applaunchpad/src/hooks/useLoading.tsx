@@ -1,26 +1,30 @@
 import { useState, useCallback } from 'react';
-import { Spinner, Flex } from '@chakra-ui/react';
+import { Loading as ShadcnLoading } from '@sealos/shadcn-ui/loading';
+import { cn } from '@sealos/shadcn-ui';
 
 export const useLoading = (props?: { defaultLoading: boolean }) => {
   const [isLoading, setIsLoading] = useState(props?.defaultLoading || false);
 
   const Loading = useCallback(
-    ({ loading, fixed = true }: { loading?: boolean; fixed?: boolean }): JSX.Element | null => {
+    ({
+      loading,
+      fixed = true,
+      backdropProps
+    }: {
+      loading?: boolean;
+      fixed?: boolean;
+      backdropProps?: React.HTMLAttributes<HTMLDivElement> & { style?: React.CSSProperties };
+    }): JSX.Element | null => {
+      const shouldShow = isLoading === true || loading === true;
+
       return (
-        <Flex
-          position={fixed ? 'fixed' : 'absolute'}
-          zIndex={100}
-          backgroundColor={'rgba(255,255,255,0.5)'}
-          top={0}
-          left={0}
-          right={0}
-          bottom={0}
-          alignItems={'center'}
-          justifyContent={'center'}
-          visibility={isLoading || loading ? 'visible' : 'hidden'}
-        >
-          <Spinner thickness="4px" speed="0.65s" emptyColor="gray.200" color="blue.500" size="xl" />
-        </Flex>
+        <ShadcnLoading
+          loading={shouldShow}
+          fixed={fixed}
+          size="lg"
+          className={cn('z-[100] bg-[rgba(244,244,247,0.5)]', backdropProps?.className)}
+          style={backdropProps?.style}
+        />
       );
     },
     [isLoading]

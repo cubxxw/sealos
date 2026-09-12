@@ -1,4 +1,5 @@
 import { AppStatusEnum, PodStatusEnum } from '@/constants/app';
+import { YamlKindEnum } from '@/utils/adapt';
 import type {
   V1Deployment,
   V1ConfigMap,
@@ -8,10 +9,14 @@ import type {
   V1HorizontalPodAutoscaler,
   V1Pod,
   SinglePodMetrics,
-  V1StatefulSet
+  V1StatefulSet,
+  V1Volume,
+  V1VolumeMount
 } from '@kubernetes/client-node';
+import type { Quantity } from '@sealos/shared';
+import { MonitorDataResult } from './monitor';
 
-export type HpaTarget = 'cpu' | 'memory';
+export type HpaTarget = 'cpu' | 'memory' | 'gpu';
 
 export type DeployKindsType =
   | V1Deployment
@@ -23,6 +28,12 @@ export type DeployKindsType =
   | V1HorizontalPodAutoscaler;
 
 export type EditType = 'form' | 'yaml';
+
+export type GpuType = {
+  manufacturers: string;
+  type: string;
+  amount: number;
+};
 
 export interface AppStatusMapType {
   label: string;
@@ -38,15 +49,24 @@ export interface AppListItemType {
   status: AppStatusMapType;
   isPause: boolean;
   createTime: string;
-  cpu: number;
-  memory: number;
-  usedCpu: number[];
-  useMemory: number[];
+  cpu: Quantity;
+  memory: Quantity;
+  gpu?: GpuType;
+  usedCpu: MonitorDataResult;
+  usedMemory: MonitorDataResult; // average value
   activeReplicas: number;
   minReplicas: number;
   maxReplicas: number;
   storeAmount: number;
+  labels: { [key: string]: string };
+  source: TAppSource;
+  kind?: 'deployment' | 'statefulset';
+  remark?: string;
 }
+
+export type ApplicationProtocolType = 'HTTP' | 'GRPC' | 'WS';
+
+export type TransportProtocolType = 'TCP' | 'UDP' | 'SCTP';
 
 export interface AppEditType {
   appName: string;
@@ -54,18 +74,27 @@ export interface AppEditType {
   runCMD: string;
   cmdParam: string;
   replicas: number | '';
-  cpu: number;
-  memory: number;
-  containerOutPort: number | '';
-  accessExternal: {
-    use: boolean;
-    backendProtocol: 'HTTP' | 'GRPC' | 'WS';
-    outDomain: string;
-    selfDomain: string;
-  };
+  cpu: Quantity;
+  memory: Quantity;
+  gpu?: GpuType;
+  networks: {
+    serviceName?: string;
+    networkName: string;
+    portName: string;
+    port: number;
+    protocol: TransportProtocolType;
+    appProtocol?: ApplicationProtocolType;
+    openPublicDomain: boolean;
+    publicDomain: string; //  domainPrefix
+    customDomain: string; // custom domain
+    domain: string; // Main promoted domain
+    nodePort?: number; // nodePort
+    openNodePort: boolean; // open nodePort
+  }[];
   envs: {
     key: string;
     value: string;
+    valueFrom?: any;
   }[];
   hpa: {
     use: boolean;
@@ -83,29 +112,80 @@ export interface AppEditType {
   configMapList: {
     mountPath: string;
     value: string;
+    key: string;
+    volumeName: string;
+    subPath?: string; // compatible old key
   }[];
   storeList: {
+    name: string;
     path: string;
-    value: number;
+    value: Quantity;
   }[];
+  labels: { [key: string]: string };
+  volumes: V1Volume[];
+  volumeMounts: V1VolumeMount[];
+  kind: 'deployment' | 'statefulset';
 }
 
+export type AppEditSyncedFields = Pick<
+  AppEditType,
+  | 'imageName'
+  | 'replicas'
+  | 'cpu'
+  | 'memory'
+  | 'networks'
+  | 'cmdParam'
+  | 'runCMD'
+  | 'appName'
+  | 'labels'
+  | 'gpu'
+>;
+
+export type TAppSourceType = 'app_store' | 'sealaf';
+
+export type TAppSource = {
+  hasSource: boolean;
+  sourceName: string;
+  sourceType: TAppSourceType;
+};
 export interface AppDetailType extends AppEditType {
   id: string;
   createTime: string;
   status: AppStatusMapType;
   isPause: boolean;
   imageName: string;
-  usedCpu: number[];
-  usedMemory: number[];
+  usedCpu: MonitorDataResult;
+  usedMemory: MonitorDataResult;
+  crYamlList: DeployKindsType[];
+  labels: { [key: string]: string };
+  source: TAppSource;
   // pods: PodDetailType[];
+  openapi?: {
+    status: {
+      observedGeneration: number;
+      replicas: number;
+      availableReplicas: number;
+      updatedReplicas: number;
+      isPause: boolean;
+    };
+  };
 }
 
 export interface PodStatusMapType {
   label: string;
   value: `${PodStatusEnum}`;
   color: string;
+  reason?: string;
+  message?: string;
 }
+
+export interface ContainerStatusType {
+  name: string;
+  state: PodStatusMapType;
+  cpuLimit?: string;
+  memoryLimit?: string;
+}
+
 export interface PodDetailType extends V1Pod {
   podName: string;
   status: PodStatusMapType;
@@ -113,15 +193,18 @@ export interface PodDetailType extends V1Pod {
   ip: string;
   restarts: number;
   age: string;
-  usedCpu: number[];
-  usedMemory: number[];
-  cpu: number;
-  memory: number;
+  usedCpu: MonitorDataResult;
+  usedMemory: MonitorDataResult;
+  cpu: Quantity;
+  memory: Quantity;
+  podReason?: string;
+  podMessage?: string;
+  containerStatuses: ContainerStatusType[];
 }
 export interface PodMetrics {
   podName: string;
-  cpu: number;
-  memory: number;
+  cpu: Quantity;
+  memory: Quantity;
 }
 
 export interface PodEvent {
@@ -133,3 +216,30 @@ export interface PodEvent {
   firstTime: string;
   lastTime: string;
 }
+
+export type AppPatchPropsType = (
+  | { type: 'delete'; kind: `${YamlKindEnum}`; name: string }
+  | { type: 'patch'; kind: `${YamlKindEnum}`; value: Record<string, any> }
+  | { type: 'create'; kind: `${YamlKindEnum}`; value: string }
+)[];
+
+export type ResourceType =
+  | 'cpu'
+  | 'infra-cpu'
+  | 'storage'
+  | 'memory'
+  | 'disk'
+  | 'mongodb'
+  | 'minio'
+  | 'infra-memory'
+  | 'infra-disk'
+  | 'services.nodeports';
+
+export type GpuNodeType = {
+  'gpu.count': number;
+  'gpu.memory': number;
+  'gpu.product': string;
+  'gpu.alias': string;
+  'gpu.available': number;
+  'gpu.used': number;
+};

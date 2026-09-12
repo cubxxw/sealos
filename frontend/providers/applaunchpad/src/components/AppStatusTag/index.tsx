@@ -1,27 +1,31 @@
-import React, { useMemo } from 'react';
-import { Flex, Box } from '@chakra-ui/react';
+import { useMemo } from 'react';
+import { useTranslation } from 'next-i18next';
+
+import { cn } from '@sealos/shadcn-ui';
 import type { AppStatusMapType } from '@/types/app';
 import { appStatusMap } from '@/constants/app';
 
-const AppStatusTag = ({ status, isPause }: { status: AppStatusMapType; isPause: boolean }) => {
+interface AppStatusTagProps {
+  status: AppStatusMapType;
+  isPause: boolean;
+  showBorder?: boolean;
+  className?: string;
+}
+
+const AppStatusTag = ({ status, isPause, showBorder = false, className }: AppStatusTagProps) => {
+  const { t } = useTranslation();
   const statusMap = useMemo(() => (isPause ? appStatusMap.pause : status), [isPause, status]);
+
   return (
-    <Flex
-      color={statusMap.color}
-      backgroundColor={statusMap.backgroundColor}
-      py={2}
-      px={3}
-      borderRadius={'24px'}
-      fontSize={'xs'}
-      fontWeight={'bold'}
-      alignItems={'center'}
-      w={'88px'}
-    >
-      <Box w={'10px'} h={'10px'} borderRadius={'10px'} backgroundColor={statusMap.dotColor}></Box>
-      <Box ml={2} flex={1}>
-        {statusMap.label}
-      </Box>
-    </Flex>
+    <div className="flex shrink-0 items-center">
+      <div className={cn('flex items-center gap-2 text-sm font-medium', className)}>
+        <div
+          className="h-2 w-2 shrink-0 rounded-xs"
+          style={{ backgroundColor: statusMap.dotColor }}
+        />
+        <span>{t(statusMap.label)}</span>
+      </div>
+    </div>
   );
 };
 

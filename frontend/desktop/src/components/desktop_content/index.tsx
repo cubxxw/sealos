@@ -1,58 +1,155 @@
-/* eslint-disable @next/next/no-img-element */
+import { getWorkspaceQuota } from '@/api/platform';
 import AppWindow from '@/components/app_window';
-import MoreButton from '@/components/more_button';
-import useAppStore from '@/stores/app';
-import useDesktopGlobalConfig from '@/stores/desktop';
-import { TApp } from '@/types';
-import { Box, Flex, Grid, GridItem, Text } from '@chakra-ui/react';
+import useAppStore, { BRAIN_APP_KEY, SESSION_RESTORE_APP_KEY } from '@/stores/app';
+import { useConfigStore } from '@/stores/config';
+import { useDesktopConfigStore } from '@/stores/desktopConfig';
+import { WindowSize } from '@/types';
+import { Box, Flex, Image, Button, Text } from '@chakra-ui/react';
+import { useTranslation } from 'next-i18next';
 import dynamic from 'next/dynamic';
-import { MouseEvent, useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createMasterAPP, masterApp } from 'sealos-desktop-sdk/master';
+import type { InitialAppLaunchState } from '@/utils/initialAppTarget';
+import { ChakraIndicator } from './ChakraIndicator';
+// import Apps from './apps';
 import IframeWindow from './iframe_window';
-import styles from './index.module.scss';
+import styles from './index.module.css';
+import NeedToMerge from '../account/AccountCenter/mergeUser/NeedToMergeModal';
+import { useRealNameAuthNotification } from '../account/RealNameModal';
+import useSessionStore from '@/stores/session';
+import LoginModal from '@/components/LoginModal';
+import { useQuery } from '@tanstack/react-query';
+import { getAmount, UserInfo } from '@/api/auth';
+import OnlineServiceButton from './serviceButton';
+import SaleBanner from '../banner';
+import { useAppDisplayConfigStore } from '@/stores/appDisplayConfig';
+import { useGuideModalStore } from '@/stores/guideModal';
+import GuideModal from '../account/GuideModal';
+import { GlobalNotification } from './GlobalNotification';
 
-const TimeComponent = dynamic(() => import('./time'), {
-  ssr: false
-});
-const UserMenu = dynamic(() => import('@/components/user_menu'), {
-  ssr: false
-});
+const AppDock = dynamic(() => import('../AppDock'), { ssr: false });
+const FloatButton = dynamic(() => import('@/components/floating_button'), { ssr: false });
+const Account = dynamic(() => import('../account'), { ssr: false });
+const Apps = dynamic(() => import('./apps'), { ssr: false });
 
-export default function DesktopContent(props: any) {
-  const { installedApps: apps, runningInfo, openApp, setToHighestLayerById } = useAppStore();
-  const isBrowser = typeof window !== 'undefined';
-  // set DesktopHeight from globalconfig
-  const { setDesktopHeight } = useDesktopGlobalConfig();
+export const blurBackgroundStyles = {
+  bg: 'rgba(22, 30, 40, 0.35)',
+  backdropFilter: 'blur(80px) saturate(150%)',
+  border: 'none',
+  borderRadius: '12px'
+};
 
-  useMemo(
-    () => isBrowser && setDesktopHeight(document.getElementById('desktop')?.clientHeight || 0),
-    [isBrowser, setDesktopHeight]
-  );
+type DesktopProps = {
+  initialAppLaunch: InitialAppLaunchState;
+  onInitialAppLoaded: (appKey: string) => void;
+};
 
-  const handleDoubleClick = (e: MouseEvent<HTMLDivElement>, item: TApp) => {
-    e.preventDefault();
-    if (item?.name) {
-      openApp(item);
+export default function Desktop({ initialAppLaunch, onInitialAppLoaded }: DesktopProps) {
+  const { t } = useTranslation();
+  const { isAppBar } = useDesktopConfigStore();
+  const {
+    installedApps: apps,
+    runningInfo,
+    openApp,
+    setToHighestLayerById,
+    closeAppById,
+    setAutoLaunch,
+    currentAppKey
+  } = useAppStore();
+  const backgroundImage = useConfigStore().layoutConfig?.backgroundImage;
+  const { backgroundImage: desktopBackgroundImage } = useAppDisplayConfigStore();
+  const { realNameAuthNotification } = useRealNameAuthNotification();
+  const { layoutConfig, cloudConfig } = useConfigStore();
+  const { session } = useSessionStore();
+  const { isGuest, openGuestLoginModal, showGuestLoginModal, closeGuestLoginModal } =
+    useSessionStore();
+  const { commonConfig } = useConfigStore();
+  const realNameAuthNotificationIdRef = useRef<string | number | undefined>();
+  const [isClient, setIsClient] = useState(false);
+  const guideModal = useGuideModalStore();
+  const isInitialAppLoading = initialAppLaunch.status !== 'ready';
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  useEffect(() => {
+    // Do not let rehydrated, cross-tab state overwrite this tab's restore
+    // intent before the initial target has been selected and loaded.
+    if (!isClient || isInitialAppLoading) return;
+
+    if (!currentAppKey) {
+      sessionStorage.removeItem(SESSION_RESTORE_APP_KEY);
+      return;
     }
-  };
+
+    if (currentAppKey === BRAIN_APP_KEY) {
+      sessionStorage.removeItem(SESSION_RESTORE_APP_KEY);
+      return;
+    }
+
+    sessionStorage.setItem(SESSION_RESTORE_APP_KEY, currentAppKey);
+  }, [isClient, currentAppKey, isInitialAppLoading]);
+
+  // Do not keep the startup mask forever when an iframe fails to report load.
+  useEffect(() => {
+    if (initialAppLaunch.status !== 'loading') {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => onInitialAppLoaded(initialAppLaunch.appKey), 10_000);
+    return () => window.clearTimeout(timeout);
+  }, [initialAppLaunch, onInitialAppLoaded]);
+
+  const infoData = useQuery({
+    queryFn: UserInfo,
+    queryKey: [session?.token, 'UserInfo'],
+    select(d) {
+      return d.data?.info;
+    }
+  });
+
+  const { data: account } = useQuery({
+    queryKey: ['getAmount', { userId: session?.user?.userCrUid }],
+    queryFn: getAmount,
+    enabled: !!session?.user,
+    staleTime: 60 * 1000
+  });
 
   /**
-   * open app
+   * Open Desktop Application
+   *
+   * @param {object} options - Options for opening the application
+   * @param {string} options.appKey - Unique identifier key for the application
+   * @param {object} [options.query={}] - Query parameter object
+   * @param {object} [options.messageData={}] - Message data to be sent to the application
+   * @param {string} options.pathname - Path when the application opens
+   *
+   * Logic:
+   * - Find information about the application and its running state
+   * - If the application does not exist, exit
+   * - If the application is not open (not running), call the openApp method to open it
+   * - If the application is already open (running), bring it to the highest layer
+   * - Send a postMessage to the application window to handle the message data
    */
   const openDesktopApp = useCallback(
     ({
       appKey,
       query = {},
-      messageData = {}
+      messageData = {},
+      pathname = '/',
+      appSize = 'maximize'
     }: {
       appKey: string;
       query?: Record<string, string>;
       messageData?: Record<string, any>;
+      pathname: string;
+      appSize?: WindowSize;
     }) => {
       const app = apps.find((item) => item.key === appKey);
       const runningApp = runningInfo.find((item) => item.key === appKey);
       if (!app) return;
-      openApp(app, query);
+      openApp(app, { query, pathname, appSize });
       if (runningApp) {
         setToHighestLayerById(runningApp.pid);
       }
@@ -64,76 +161,227 @@ export default function DesktopContent(props: any) {
     [apps, openApp, runningInfo, setToHighestLayerById]
   );
 
+  const closeDesktopApp = useCallback(
+    ({ appKey }: { appKey: string }) => {
+      const app = apps.find((item) => item.key === appKey);
+      const runningApp = runningInfo.find((item) => item.key === appKey);
+      if (!app || !runningApp) return;
+      closeAppById(runningApp.pid);
+    },
+    [apps, runningInfo, closeAppById]
+  );
+
+  const quitGuide = useCallback(
+    ({ appKey }: { appKey: string }) => {
+      closeDesktopApp({ appKey });
+      if (commonConfig?.guideEnabled) {
+        guideModal.openGuideModal();
+      }
+    },
+    [closeDesktopApp, commonConfig?.guideEnabled, guideModal]
+  );
+
+  const handleRequestLogin = useCallback(
+    (data: { appKey: string; pathname: string; query: Record<string, string> }) => {
+      console.log('Guest Mode: Received request_login from Brain:', data);
+      if (data?.appKey) {
+        const launchQuery = {
+          pathname: data.pathname || '/',
+          raw: new URLSearchParams(data.query || {}).toString() || ''
+        };
+        console.log('Guest Mode: Saving autolaunch state:', data.appKey, launchQuery);
+        setAutoLaunch(data.appKey, launchQuery, undefined);
+      }
+      openGuestLoginModal();
+    },
+    [openGuestLoginModal, setAutoLaunch]
+  );
+
   useEffect(() => {
-    return createMasterAPP();
+    const cleanupMaster = createMasterAPP({
+      allowedOrigins: cloudConfig?.allowedOrigins || ['*'],
+      getWorkspaceQuotaApi: async () => {
+        return getWorkspaceQuota().then((res) => res.data?.quota ?? []);
+      },
+      getHostConfigApi: async () => {
+        const config = useConfigStore.getState();
+        return {
+          cloud: {
+            domain: config.cloudConfig?.domain || '',
+            port: config.cloudConfig?.port || '',
+            regionUid: config.cloudConfig?.regionUID || ''
+          },
+          features: {
+            subscription: config.layoutConfig?.common?.subscriptionEnabled || false
+          }
+        };
+      }
+    });
+    const cleanups = [
+      masterApp?.addEventListen('openDesktopApp', openDesktopApp),
+      masterApp?.addEventListen('closeDesktopApp', closeDesktopApp),
+      masterApp?.addEventListen('requestLogin', handleRequestLogin),
+      masterApp?.addEventListen('quitGuide', quitGuide)
+    ].filter(Boolean) as Array<() => void>;
+
+    return () => {
+      cleanups.forEach((fn) => fn());
+      cleanupMaster?.();
+    };
+  }, [
+    cloudConfig?.allowedOrigins,
+    openDesktopApp,
+    closeDesktopApp,
+    openGuestLoginModal,
+    setAutoLaunch,
+    quitGuide,
+    handleRequestLogin
+  ]);
+
+  useEffect(() => {
+    if (infoData.isSuccess && commonConfig?.realNameAuthEnabled && account?.data?.balance) {
+      if (!infoData?.data?.realName && !infoData?.data?.enterpriseRealName) {
+        realNameAuthNotificationIdRef.current = realNameAuthNotification({
+          duration: null,
+          isClosable: true
+        });
+      }
+    }
+
+    return () => {
+      if (realNameAuthNotificationIdRef.current) {
+        realNameAuthNotification.close(realNameAuthNotificationIdRef.current);
+      }
+    };
+  }, [infoData.data, commonConfig?.realNameAuthEnabled]);
+
+  const [isBannerVisible, setIsBannerVisible] = useState(false);
+  useEffect(() => {
+    const lastClosedTimestamp = localStorage.getItem('bannerLastClosed');
+    const today = new Date().toLocaleDateString();
+
+    if (lastClosedTimestamp !== today) {
+      setIsBannerVisible(true);
+    }
   }, []);
 
-  useEffect(() => {
-    return masterApp?.addEventListen('openDesktopApp', openDesktopApp);
-  }, [openDesktopApp]);
+  // Keep Desktop chrome hidden until the initial target is resolved and loaded.
+  if (isInitialAppLoading) {
+    return (
+      <Box
+        id="desktop"
+        className={styles.desktop}
+        position={'relative'}
+        display="flex"
+        alignItems="center"
+        justifyContent="center"
+        bg="#080A11"
+        aria-busy="true"
+      >
+        {/* Open the target behind the startup mask so its iframe can load immediately. */}
+        {runningInfo.map((process) => {
+          return (
+            <AppWindow key={process.pid} style={{ height: '100vh' }} pid={process.pid}>
+              <IframeWindow pid={process.pid} onLoad={() => onInitialAppLoaded(process.key)} />
+            </AppWindow>
+          );
+        })}
+
+        {initialAppLaunch.status === 'loading' && initialAppLaunch.appKey === BRAIN_APP_KEY && (
+          <Box
+            data-testid="brain-startup-mask"
+            position="fixed"
+            inset={0}
+            zIndex={1000}
+            bg="#080A11"
+            pointerEvents="none"
+          />
+        )}
+      </Box>
+    );
+  }
 
   return (
-    <div id="desktop" className={styles.desktop}>
-      <Flex w="100%" h="100%" alignItems={'center'} flexDirection={'column'}>
-        <Box mt="12vh" minW={'508px'}>
-          <TimeComponent />
-        </Box>
-        {/* desktop apps */}
-        <Grid
-          mt="50px"
-          minW={'508px'}
-          maxH={'300px'}
-          templateRows={'repeat(2, 100px)'}
-          templateColumns={'repeat(5, 72px)'}
-          gap={'36px'}
+    <Box id="desktop" className={styles.desktop} position={'relative'}>
+      <Box position="absolute" top="0" left="0" right="0" bottom="0" zIndex={-10} overflow="hidden">
+        <Image
+          src={backgroundImage || desktopBackgroundImage || '/images/bg-light.svg'}
+          alt=""
+          width="100%"
+          height="100vh"
+          objectFit="cover"
+          objectPosition="bottom"
+        />
+      </Box>
+
+      {!isGuest() && isClient && layoutConfig?.customerServiceURL && <OnlineServiceButton />}
+      <ChakraIndicator />
+      {layoutConfig?.common?.bannerEnabled && (
+        <SaleBanner isBannerVisible={isBannerVisible} setIsBannerVisible={setIsBannerVisible} />
+      )}
+
+      <GlobalNotification />
+
+      {isClient && !isGuest() && (
+        <Flex height={'68px'} px={{ base: '16px', md: '32px' }}>
+          <Account />
+        </Flex>
+      )}
+
+      {isClient && isGuest() && (
+        <Flex
+          height="68px"
+          px={{ base: '16px', md: '32px' }}
+          alignItems="center"
+          justifyContent="space-between"
+          borderBottom="1px solid"
+          borderColor="gray.200"
+          bg="white"
         >
-          {apps &&
-            apps.map((item: TApp, index) => (
-              <GridItem
-                w="72px"
-                h="100px"
-                key={index}
-                userSelect="none"
-                cursor={'pointer'}
-                onClick={(e) => handleDoubleClick(e, item)}
-              >
-                <Box
-                  w="72px"
-                  h="72px"
-                  p={'15px'}
-                  border={'1px solid #FFFFFF'}
-                  borderRadius={8}
-                  boxShadow={'0px 1.16667px 2.33333px rgba(0, 0, 0, 0.2)'}
-                  backgroundColor={'rgba(244, 246, 248, 0.9)'}
-                >
-                  <img width={'100%'} height={'100%'} alt="app" src={item?.icon}></img>
-                </Box>
-                <Text
-                  textShadow={'0px 1px 2px rgba(0, 0, 0, 0.4)'}
-                  textAlign={'center'}
-                  mt="8px"
-                  color={'#FFFFFF'}
-                  // fontWeight={400}
-                  fontSize={'10px'}
-                  lineHeight={'16px'}
-                >
-                  {item?.name}
-                </Text>
-              </GridItem>
-            ))}
-        </Grid>
-        <MoreButton />
-        <UserMenu />
+          <Flex alignItems="center" gap="12px">
+            <Text fontSize="18px" fontWeight="600" color="gray.800">
+              {t('v2:guest_mode')}
+            </Text>
+            <Text fontSize="14px" color="gray.500">
+              {t('v2:guest_mode_login_tip')}
+            </Text>
+          </Flex>
+          <Button onClick={openGuestLoginModal} colorScheme="blue">
+            {t('v2:login_sign_up')}
+          </Button>
+        </Flex>
+      )}
+
+      <Flex
+        width={'100%'}
+        height={'calc(100% - 87px)'}
+        pt={{ base: '20px', md: '80px', xl: '120px' }}
+        maxW={'1074px'}
+        pb={'84px'}
+        mx={'auto'}
+        position={'relative'}
+      >
+        <Flex flexDirection={'column'} gap={'8px'} flex={1} position={'relative'} width={'100%'}>
+          <Apps />
+        </Flex>
       </Flex>
+
+      {!isGuest() && (isAppBar ? <AppDock /> : <FloatButton />)}
+
+      {commonConfig?.guideEnabled ? <GuideModal /> : null}
 
       {/* opened apps */}
       {runningInfo.map((process) => {
         return (
           <AppWindow key={process.pid} style={{ height: '100vh' }} pid={process.pid}>
-            <IframeWindow pid={process.pid} />
+            <IframeWindow pid={process.pid} onLoad={() => onInitialAppLoaded(process.key)} />
           </AppWindow>
         );
       })}
-    </div>
+
+      <NeedToMerge />
+
+      {isGuest() && <LoginModal isOpen={showGuestLoginModal} onClose={closeGuestLoginModal} />}
+    </Box>
   );
 }

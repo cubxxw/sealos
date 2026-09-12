@@ -1,13 +1,12 @@
 /** @type {import('next').NextConfig} */
-const BundleAnalyzerPlugin = require('webpack-bundle-analyzer').BundleAnalyzerPlugin;
-
-const analyzer = process.env === 'production' ? [new BundleAnalyzerPlugin()] : [];
-
+const { i18n } = require('./next-i18next.config');
+const path = require('path');
 const nextConfig = {
+  i18n,
   output: 'standalone',
   reactStrictMode: false,
   compress: true,
-  webpack(config) {
+  webpack: (config, { isServer }) => {
     config.module.rules = config.module.rules.concat([
       {
         test: /\.svg$/i,
@@ -15,9 +14,26 @@ const nextConfig = {
         use: ['@svgr/webpack']
       }
     ]);
-    config.plugins = [...config.plugins, ...analyzer];
-
+    config.plugins = [...config.plugins];
+    if (!isServer) {
+      config.resolve.fallback = {
+        fs: false
+      };
+    }
     return config;
+  },
+  transpilePackages: ['@sealos/driver', '@sealos/ui', '@sealos/shadcn-ui', 'geist'],
+  experimental: {
+    outputFileTracingRoot: path.join(__dirname, '../../'),
+    instrumentationHook: true
+  },
+  async rewrites() {
+    return [
+      {
+        source: '/api/v2alpha/openapi.json',
+        destination: '/api/v2alpha/openapi'
+      }
+    ];
   }
 };
 

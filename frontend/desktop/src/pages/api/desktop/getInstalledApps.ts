@@ -1,42 +1,90 @@
-// import MockInstalAPPs from 'mock/installedApps';
-import type { NextApiRequest, NextApiResponse } from 'next';
-import { authSession } from '@/services/backend/auth';
-import { GetUserDefaultNameSpace, K8sApi, ListCRD } from '../../../services/backend/kubernetes';
+import { verifyAccessToken } from '@/services/backend/auth';
+import { getUserKubeconfigNotPatch } from '@/services/backend/kubernetes/admin';
+import { K8sApi, ListCRD } from '@/services/backend/kubernetes/user';
 import { jsonRes } from '@/services/backend/response';
+import {
+  CRDMeta,
+  ForcedIconStyleAnnotation,
+  TAppCR,
+  TAppCRList,
+  TAppConfig,
+  TForcedIconStyle
+} from '@/types';
+import type { NextApiRequest, NextApiResponse } from 'next';
+
+import { globalPrisma } from '@/services/backend/db/init';
+import { compareSystemAppOrder } from '@/utils/appSort';
+import { switchKubeconfigNamespace } from '@/utils/switchKubeconfigNamespace';
+import { UserStatus } from 'prisma/global/generated/client';
+
+const normalizeForcedIconStyle = (value: string | undefined): TForcedIconStyle | undefined => {
+  if (value === 'contain' || value === 'fill') {
+    return value;
+  }
+
+  return undefined;
+};
+
+const getRepresentativeMeta = (key: string, annotations?: TAppCR['metadata']['annotations']) => {
+  const forcedIconStyleFromAnnotation = normalizeForcedIconStyle(
+    annotations?.[ForcedIconStyleAnnotation]
+  );
+
+  return {
+    forcedIconStyle: forcedIconStyleFromAnnotation || (key.startsWith('user-') ? 'contain' : 'fill')
+  };
+};
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const kc = await authSession(req.headers);
-
-    const kube_user = kc.getCurrentUser();
-    if (kube_user === null) {
-      return jsonRes(res, { code: 403, message: 'user is null' });
-    }
-
-    const defaultMeta = {
-      group: 'app.sealos.io',
-      version: 'v1',
-      namespace: 'app-system',
-      plural: 'apps'
-    };
-
-    const meta = {
-      group: 'app.sealos.io',
-      version: 'v1',
-      namespace: GetUserDefaultNameSpace(kube_user.name),
-      plural: 'apps'
-    };
-
-    const defaultResult = await ListCRD(kc, defaultMeta);
-    const userResult = await ListCRD(kc, meta);
-
-    //@ts-ignore
-    const defaultArr = defaultResult?.body?.items.map((item: any) => {
-      return { key: `system-${item.metadata.name}`, ...item.spec };
+    const payload = await verifyAccessToken(req.headers);
+    if (!payload) return jsonRes(res, { code: 401, message: 'token is invaild' });
+    const user = await globalPrisma.user.findUnique({
+      where: {
+        uid: payload.userUid,
+        status: UserStatus.NORMAL_USER
+      }
     });
-    //@ts-ignore
-    const userArr = userResult?.body?.items.map((item: any) => {
-      return { key: `user-${item.metadata.name}`, ...item.spec };
+    if (!user) return jsonRes(res, { code: 401, message: 'user is locked' });
+    const _kc = await getUserKubeconfigNotPatch(payload.userCrName);
+    if (!_kc) return jsonRes(res, { code: 404, message: 'user is not found' });
+    const realKc = switchKubeconfigNamespace(_kc, payload.workspaceId);
+    const kc = K8sApi(realKc);
+
+    const getMeta = (namespace = 'app-system') => ({
+      group: 'app.sealos.io',
+      version: 'v1',
+      namespace,
+      plural: 'apps'
+    });
+
+    const getRawAppList = async (meta: CRDMeta) =>
+      ((await ListCRD(kc, meta)).body as TAppCRList).items || [];
+
+    const defaultArr = (await getRawAppList(getMeta()))
+      .map<TAppConfig>((item) => {
+        const key = `system-${item.metadata.name}` as const;
+
+        return {
+          key,
+          ...item.spec,
+          representativeMeta: getRepresentativeMeta(key, item.metadata.annotations),
+          displayType: item.spec.displayType || 'normal',
+          creationTimestamp: item.metadata.creationTimestamp
+        };
+      })
+      .sort(compareSystemAppOrder);
+
+    const userArr = (await getRawAppList(getMeta(payload.workspaceId))).map<TAppConfig>((item) => {
+      const key = `user-${item.metadata.name}` as const;
+
+      return {
+        key,
+        ...item.spec,
+        representativeMeta: getRepresentativeMeta(key, item.metadata.annotations),
+        displayType: 'normal',
+        creationTimestamp: item.metadata.creationTimestamp
+      };
     });
 
     let apps = [...defaultArr, ...userArr];

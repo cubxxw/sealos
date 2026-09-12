@@ -1,51 +1,141 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import { useRouter } from 'next/router';
-import { Flex, Box } from '@chakra-ui/react';
-import type { YamlItemType } from '@/types';
-import {
-  json2Development,
-  json2StatefulSet,
-  json2Service,
-  json2Ingress,
-  json2ConfigMap,
-  json2Secret,
-  json2HPA
-} from '@/utils/deployYaml2Json';
-import { useForm } from 'react-hook-form';
-import { defaultEditVal, editModeMap } from '@/constants/editApp';
-import debounce from 'lodash/debounce';
 import { postDeployApp, putApp } from '@/api/app';
+import { checkPermission } from '@/api/platform';
+import { defaultSliderKey } from '@/constants/app';
+import { defaultEditVal, editModeMap } from '@/constants/editApp';
 import { useConfirm } from '@/hooks/useConfirm';
-import type { AppEditType } from '@/types/app';
-import { adaptEditAppData } from '@/utils/adapt';
-import { useToast } from '@/hooks/useToast';
-import { useQuery } from '@tanstack/react-query';
-import { useAppStore } from '@/store/app';
 import { useLoading } from '@/hooks/useLoading';
-import Header from './components/Header';
-import Form from './components/Form';
-import Yaml from './components/Yaml';
-import dynamic from 'next/dynamic';
-const ErrorModal = dynamic(() => import('./components/ErrorModal'));
+import { useAppStore } from '@/store/app';
 import { useGlobalStore } from '@/store/global';
+import { useUserStore } from '@/store/user';
+import type { QueryType, YamlItemType } from '@/types';
+import type { AppEditSyncedFields, AppEditType, DeployKindsType } from '@/types/app';
+import { adaptEditAppData } from '@/utils/adapt';
+import {
+  json2ConfigMap,
+  json2DeployCr,
+  json2HPA,
+  json2Ingress,
+  json2Secret,
+  json2Service
+} from '@/utils/deployYaml2Json';
+import { serviceSideProps } from '@/utils/i18n';
+import { getErrText, patchYamlList } from '@/utils/tools';
 
-const EditApp = ({ appName }: { appName?: string }) => {
-  const { toast } = useToast();
+import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'next-i18next';
+import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import Form from './components/Form';
+import Header from './components/Header';
+import Yaml from './components/Yaml';
+import { toast } from 'sonner';
+import { customAlphabet } from 'nanoid';
+import { ResponseCode } from '@/types/response';
+import { useGuideStore } from '@/store/guide';
+import { track } from '@sealos/gtm';
+import { useQuotaGuarded, useUserQuota, resourcePropertyMap } from '@sealos/shared';
+import { useClientAppConfig } from '@/hooks/useClientAppConfig';
+import {
+  cpuMillicoresToQuantity,
+  memoryMiToQuantity,
+  quantityFromJSONOrZero,
+  quantityToCpuMillicores,
+  quantityToMemoryMi,
+  quantityToStorageGi
+} from '@/utils/resourceQuantity';
+import { hydrateLegacyAppFormData } from '@/utils/hydrateLegacyAppForm';
+
+const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz', 12);
+
+const ErrorModal = dynamic(() => import('@/components/ErrorModal'));
+
+export const formData2Yamls = (
+  data: AppEditType,
+  userDomains: { name: string; secretName: string }[],
+  options: {
+    disableHttps?: boolean;
+  } = {}
+) => [
+  {
+    filename: 'service.yaml',
+    value: json2Service(data)
+  },
+  data.kind === 'statefulset' || data.storeList?.length > 0
+    ? {
+        filename: 'statefulset.yaml',
+        value: json2DeployCr(data, 'statefulset')
+      }
+    : {
+        filename: 'deployment.yaml',
+        value: json2DeployCr(data, 'deployment')
+      },
+  ...(data.configMapList.length > 0
+    ? [
+        {
+          filename: 'configmap.yaml',
+          value: json2ConfigMap(data)
+        }
+      ]
+    : []),
+  ...(data.networks.find((item) => item.openPublicDomain)
+    ? [
+        {
+          filename: 'ingress.yaml',
+          value: json2Ingress(data, userDomains, options)
+        }
+      ]
+    : []),
+  ...(data.hpa.use
+    ? [
+        {
+          filename: 'hpa.yaml',
+          value: json2HPA(data)
+        }
+      ]
+    : []),
+  ...(data.secret.use
+    ? [
+        {
+          filename: 'secret.yaml',
+          value: json2Secret(data)
+        }
+      ]
+    : [])
+];
+
+const EditApp = ({ appName, tabType }: { appName?: string; tabType: string }) => {
+  const { t } = useTranslation();
+  const formOldYamls = useRef<YamlItemType[]>([]);
+  const crOldYamls = useRef<DeployKindsType[]>([]);
+  const oldAppEditData = useRef<AppEditType>();
   const { Loading, setIsLoading } = useLoading();
   const router = useRouter();
-  const { type: tabType = 'form' } = router.query;
   const [forceUpdate, setForceUpdate] = useState(false);
   const { setAppDetail } = useAppStore();
-  const { title, applyBtnText, applyMessage, applySuccess, applyError } = editModeMap(!!appName);
+  const { screenWidth, formSliderListConfig } = useGlobalStore();
+  const config = useClientAppConfig();
+  const { userSourcePrice, loadUserSourcePrice } = useUserStore();
+  const { title, applyBtnText, applyConfirmTitle, applyMessage, applySuccess, applyError } =
+    editModeMap(!!appName);
   const [yamlList, setYamlList] = useState<YamlItemType[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
+  const [errorCode, setErrorCode] = useState<ResponseCode>();
   const [already, setAlready] = useState(false);
-  const [defaultStorePathList, setDefaultStorePathList] = useState<string[]>([]); // default store will no be edit
+  const { name } = router.query as QueryType;
+  const isEdit = useMemo(() => !!name, [name]);
+  // For identifying existing stores and quota calculation
+  const [existingStores, setExistingStores] = useState<AppEditType['storeList']>([]);
+  const [defaultGpuSource, setDefaultGpuSource] = useState<AppEditType['gpu']>({
+    type: '',
+    amount: 0,
+    manufacturers: ''
+  });
   const { openConfirm, ConfirmChild } = useConfirm({
+    title: applyConfirmTitle,
     content: applyMessage
   });
-  // compute container width
-  const { screenWidth } = useGlobalStore();
   const pxVal = useMemo(() => {
     const val = Math.floor((screenWidth - 1050) / 2);
     if (val < 20) {
@@ -53,145 +143,200 @@ const EditApp = ({ appName }: { appName?: string }) => {
     }
     return val;
   }, [screenWidth]);
+  const { createCompleted } = useGuideStore();
 
   // form
   const formHook = useForm<AppEditType>({
     defaultValues: defaultEditVal
   });
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const formOnchangeDebounce = useCallback(
-    debounce((data: AppEditType) => {
-      try {
-        setYamlList([
-          {
-            filename: 'service.yaml',
-            value: json2Service(data)
-          },
-          data.storeList.length > 0
-            ? {
-                filename: 'statefulSet.yaml',
-                value: json2StatefulSet(data)
-              }
-            : {
-                filename: 'deployment.yaml',
-                value: json2Development(data)
-              },
-          ...(data.configMapList.length > 0
-            ? [
-                {
-                  filename: 'configmap.yaml',
-                  value: json2ConfigMap(data)
-                }
-              ]
-            : []),
-          ...(data.accessExternal.use
-            ? [
-                {
-                  filename: 'ingress.yaml',
-                  value: json2Ingress(data)
-                }
-              ]
-            : []),
-          ...(data.hpa.use
-            ? [
-                {
-                  filename: 'hpa.yaml',
-                  value: json2HPA(data)
-                }
-              ]
-            : []),
-          ...(data.secret.use
-            ? [
-                {
-                  filename: 'secret.yaml',
-                  value: json2Secret(data)
-                }
-              ]
-            : [])
-        ]);
-      } catch (error) {
-        console.log(error);
-      }
-    }, 200),
-    []
-  );
+  const realTimeForm = useRef(defaultEditVal);
+
   // watch form change, compute new yaml
   formHook.watch((data) => {
-    data && formOnchangeDebounce(data as AppEditType);
+    if (!data) return;
+    realTimeForm.current = data as AppEditType;
     setForceUpdate(!forceUpdate);
   });
 
-  const submitSuccess = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const data = yamlList.map((item) => item.value);
-      if (appName) {
-        await putApp(data, appName);
-      } else {
-        await postDeployApp(data);
-        router.push(`/apps`);
+  const { refetch: refetchPrice } = useQuery(['init-price'], loadUserSourcePrice, {
+    enabled: !!userSourcePrice?.gpu,
+    refetchInterval: 6000
+  });
+
+  // add already deployment gpu amount if they exists
+  const countGpuInventory = useCallback(
+    (type?: string) => {
+      const inventory = userSourcePrice?.gpu?.find((item) => item.type === type)?.inventory || 0;
+      const defaultInventory = type === defaultGpuSource?.type ? defaultGpuSource?.amount || 0 : 0;
+      return inventory + defaultInventory;
+    },
+    [defaultGpuSource?.amount, defaultGpuSource?.type, userSourcePrice?.gpu]
+  );
+  const submitSuccess = useCallback(
+    async (yamlList: YamlItemType[]) => {
+      if (!createCompleted) {
+        return router.push('/app/detail?name=hello&guide=true');
       }
-      toast({
-        title: applySuccess,
-        status: 'success'
-      });
-    } catch (error) {
-      console.error(error);
-      setErrorMessage(JSON.stringify(error));
-    }
-    setIsLoading(false);
-  }, [applySuccess, appName, router, setIsLoading, toast, yamlList]);
+
+      setIsLoading(true);
+      try {
+        const parsedNewYamlList = yamlList.map((item) => item.value);
+
+        if (appName) {
+          const patch = patchYamlList({
+            parsedOldYamlList: formOldYamls.current.map((item) => item.value),
+            parsedNewYamlList: parsedNewYamlList,
+            originalYamlList: crOldYamls.current
+          });
+          await putApp({
+            patch,
+            appName,
+            stateFulSetYaml: yamlList.find((item) => item.filename === 'statefulset.yaml')?.value
+          });
+        } else {
+          await postDeployApp(parsedNewYamlList);
+        }
+
+        router.replace(`/app/detail?name=${formHook.getValues('appName')}`);
+
+        toast.success(t(applySuccess));
+
+        if (userSourcePrice?.gpu) {
+          refetchPrice();
+        }
+      } catch (error: any) {
+        if (error?.code === ResponseCode.BALANCE_NOT_ENOUGH) {
+          setErrorMessage(t('user_balance_not_enough'));
+          setErrorCode(ResponseCode.BALANCE_NOT_ENOUGH);
+
+          track('paywall_triggered', {
+            module: 'applaunchpad',
+            type: 'insufficient_balance'
+          });
+        } else if (error?.code === ResponseCode.FORBIDDEN_CREATE_APP) {
+          setErrorMessage(t('forbidden_create_app'));
+          setErrorCode(ResponseCode.FORBIDDEN_CREATE_APP);
+
+          track('error_occurred', {
+            module: 'applaunchpad',
+            error_code: 'FORBIDDEN_CREATE_APP'
+          });
+        } else if (error?.code === ResponseCode.APP_ALREADY_EXISTS) {
+          setErrorMessage(t('app_already_exists'));
+          setErrorCode(ResponseCode.APP_ALREADY_EXISTS);
+
+          track('error_occurred', {
+            module: 'applaunchpad',
+            error_code: 'APP_ALREADY_EXISTS'
+          });
+        } else {
+          setErrorMessage(JSON.stringify(error));
+        }
+      }
+      setIsLoading(false);
+    },
+    [
+      setIsLoading,
+      appName,
+      router,
+      formHook,
+      t,
+      applySuccess,
+      userSourcePrice?.gpu,
+      refetchPrice,
+      createCompleted
+    ]
+  );
+
   const submitError = useCallback(() => {
-    // deep search message
     const deepSearch = (obj: any): string => {
-      if (!obj) return '提交表单错误';
+      if (!obj || typeof obj !== 'object') return t('Submit Error');
       if (!!obj.message) {
         return obj.message;
       }
       return deepSearch(Object.values(obj)[0]);
     };
-    toast({
-      title: deepSearch(formHook.formState.errors),
-      status: 'error',
-      position: 'top',
-      duration: 3000,
-      isClosable: true
-    });
-  }, [formHook.formState.errors, toast]);
+    toast.error(deepSearch(formHook.formState.errors));
+  }, [formHook.formState.errors, t]);
+
+  const handleDomainVerified = useCallback(
+    ({ index, customDomain }: { index: number; customDomain: string }) => {
+      try {
+        if (!appName) return;
+        const data = formHook.getValues();
+        if (!data?.appName) return;
+        if (data.networks?.[index]) {
+          data.networks[index].customDomain = customDomain;
+        }
+        const ingressYaml = json2Ingress(data, config.userDomains, {
+          disableHttps: config.disableHttps
+        });
+        setIsLoading(true);
+        postDeployApp([ingressYaml], 'replace')
+          .then(() => {
+            toast.success(t('Deployment Successful'));
+            formOldYamls.current = formData2Yamls(data, config.userDomains, {
+              disableHttps: config.disableHttps
+            });
+          })
+          .catch((err) => {
+            toast.error(getErrText(err));
+          })
+          .finally(() => setIsLoading(false));
+      } catch (error) {}
+    },
+    [formHook, setIsLoading, t]
+  );
 
   useQuery(
-    ['init'],
+    ['initLaunchpadApp'],
     () => {
       if (!appName) {
+        const defaultApp = {
+          ...defaultEditVal,
+          cpu: cpuMillicoresToQuantity(formSliderListConfig[defaultSliderKey].cpu[0]),
+          memory: memoryMiToQuantity(formSliderListConfig[defaultSliderKey].memory[0])
+        };
         setAlready(true);
         setYamlList([
           {
             filename: 'service.yaml',
-            value: json2Service(defaultEditVal)
+            value: json2Service(defaultApp)
           },
           {
             filename: 'deployment.yaml',
-            value: json2Development(defaultEditVal)
+            value: json2DeployCr(defaultApp, 'deployment')
           }
         ]);
         return null;
       }
       setIsLoading(true);
+      refetchPrice();
       return setAppDetail(appName);
     },
     {
       onSuccess(res) {
         if (!res) return;
-        setAlready(true);
-        setDefaultStorePathList(res.storeList.map((item) => item.path));
+        console.log(res, 'init res');
+        oldAppEditData.current = res;
+        formOldYamls.current = formData2Yamls(res, config.userDomains, {
+          disableHttps: config.disableHttps
+        });
+        crOldYamls.current = res.crYamlList;
+
+        setExistingStores(res.storeList);
+        setDefaultGpuSource(res.gpu);
         formHook.reset(adaptEditAppData(res));
+        setAlready(true);
+        setYamlList(
+          formData2Yamls(realTimeForm.current, config.userDomains, {
+            disableHttps: config.disableHttps
+          })
+        );
       },
       onError(err) {
-        toast({
-          title: String(err),
-          status: 'error'
-        });
+        toast.error(String(err));
       },
       onSettled() {
         setIsLoading(false);
@@ -199,50 +344,307 @@ const EditApp = ({ appName }: { appName?: string }) => {
     }
   );
 
+  useEffect(() => {
+    if (tabType === 'yaml') {
+      try {
+        setYamlList(
+          formData2Yamls(realTimeForm.current, config.userDomains, {
+            disableHttps: config.disableHttps
+          })
+        );
+      } catch (error) {}
+    }
+  }, [router.query.name, tabType]);
+
+  useEffect(() => {
+    try {
+      console.log('edit page already', already, router.query);
+      if (!already) return;
+      const query = router.query as { formData?: string; name?: string };
+      if (!query.formData) return;
+
+      const parsedData: Partial<AppEditSyncedFields> = hydrateLegacyAppFormData(
+        JSON.parse(decodeURIComponent(query.formData))
+      );
+
+      const basicFields: (keyof AppEditSyncedFields)[] = router.query?.name
+        ? ['imageName', 'cpu', 'memory']
+        : ['imageName', 'replicas', 'cpu', 'memory', 'cmdParam', 'runCMD', 'appName', 'labels'];
+
+      basicFields.forEach((field) => {
+        if (parsedData[field] !== undefined) {
+          formHook.setValue(field, parsedData[field] as any);
+        }
+      });
+
+      if (Array.isArray(parsedData.networks)) {
+        const completeNetworks = parsedData.networks.map((network) => ({
+          networkName: network.networkName || `network-${nanoid()}`,
+          portName: network.portName || nanoid(),
+          port: network.port || 80,
+          protocol: network.protocol || 'TCP',
+          appProtocol: network.appProtocol || undefined,
+          openPublicDomain: network.openPublicDomain || false,
+          openNodePort: network.openNodePort || false,
+          publicDomain: network.publicDomain || nanoid(),
+          customDomain: network.customDomain || '',
+          domain: network.domain || 'gzg.sealos.run'
+        }));
+        formHook.setValue('networks', completeNetworks);
+      }
+
+      // Handle GPU configuration
+      if (parsedData.gpu && parsedData.gpu.type) {
+        formHook.setValue('gpu', {
+          type: parsedData.gpu.type,
+          amount: parsedData.gpu.amount || 0,
+          manufacturers: parsedData.gpu.manufacturers || 'nvidia'
+        });
+      }
+    } catch (error) {}
+  }, [router.query, already]);
+
+  const resourceRequirements = useMemo(() => {
+    const oldReplicas =
+      (formHook.formState.defaultValues?.hpa?.use
+        ? formHook.formState.defaultValues?.hpa?.maxReplicas
+        : Number.isSafeInteger(formHook.formState.defaultValues?.replicas)
+        ? (formHook.formState.defaultValues?.replicas as number)
+        : 1) ?? 1;
+
+    const newReplicas = realTimeForm.current.hpa.use
+      ? realTimeForm.current.hpa.maxReplicas
+      : Number.isSafeInteger(realTimeForm.current.replicas)
+      ? (realTimeForm.current.replicas as number)
+      : 1;
+
+    const oldGpuCount =
+      formHook.formState.defaultValues?.gpu?.type === ''
+        ? 0
+        : formHook.formState.defaultValues?.gpu?.amount ?? 0;
+    const newGpuCount =
+      realTimeForm.current.gpu?.type === '' ? 0 : realTimeForm.current.gpu?.amount ?? 0;
+
+    return {
+      cpu: isEdit
+        ? quantityToCpuMillicores(realTimeForm.current.cpu) * newReplicas -
+          quantityToCpuMillicores(
+            formHook.formState.defaultValues?.cpu
+              ? quantityFromJSONOrZero(String(formHook.formState.defaultValues.cpu))
+              : defaultEditVal.cpu
+          ) *
+            oldReplicas
+        : quantityToCpuMillicores(realTimeForm.current.cpu) * newReplicas,
+      memory: isEdit
+        ? quantityToMemoryMi(realTimeForm.current.memory) * newReplicas -
+          quantityToMemoryMi(
+            formHook.formState.defaultValues?.memory
+              ? quantityFromJSONOrZero(String(formHook.formState.defaultValues.memory))
+              : defaultEditVal.memory
+          ) *
+            oldReplicas
+        : quantityToMemoryMi(realTimeForm.current.memory) * newReplicas,
+      gpu: isEdit
+        ? newGpuCount * newReplicas - oldGpuCount * oldReplicas
+        : newGpuCount * newReplicas,
+      nodeport: isEdit
+        ? (realTimeForm.current.networks?.filter((item) => item.openNodePort)?.length ?? 0) *
+            newReplicas -
+          (formHook.formState.defaultValues?.networks?.filter((item) => item?.openNodePort ?? false)
+            ?.length ?? 0) *
+            oldReplicas
+        : (realTimeForm.current.networks?.filter((item) => item.openNodePort)?.length ?? 0) *
+          newReplicas,
+      storage: isEdit
+        ? (realTimeForm.current.storeList.reduce(
+            (sum, item) => sum + quantityToStorageGi(item.value),
+            0
+          ) *
+            newReplicas -
+            existingStores.reduce((sum, item) => sum + quantityToStorageGi(item.value), 0) *
+              oldReplicas) *
+          resourcePropertyMap.storage.scale
+        : realTimeForm.current.storeList.reduce(
+            (sum, item) => sum + quantityToStorageGi(item.value),
+            0
+          ) *
+          newReplicas *
+          resourcePropertyMap.storage.scale,
+      traffic: true as const
+    };
+  }, [existingStores, formHook.formState, isEdit]);
+
+  const { exceededQuotas } = useUserQuota({ requirements: resourceRequirements });
+
+  const doSubmit = useCallback(() => {
+    formHook.handleSubmit(async (data) => {
+      // gpu inventory check
+      if (data.gpu?.type) {
+        const inventory = countGpuInventory(data.gpu?.type);
+        if (data.gpu?.amount > inventory) {
+          return toast.warning(
+            t('Gpu under inventory Tip', {
+              gputype: data.gpu.type
+            })
+          );
+        }
+      }
+
+      // check network port
+      if (!checkNetworkPorts(data.networks)) {
+        return toast.warning(t('Network port conflict'));
+      }
+
+      // check permission
+      if (appName) {
+        try {
+          await checkPermission({
+            appName: data.appName
+          });
+        } catch (error: any) {
+          if (error?.code === ResponseCode.BALANCE_NOT_ENOUGH) {
+            setErrorMessage(t('user_balance_not_enough'));
+            setErrorCode(ResponseCode.BALANCE_NOT_ENOUGH);
+            setIsLoading(false);
+            return;
+          } else if (error?.code === ResponseCode.FORBIDDEN_CREATE_APP) {
+            setErrorMessage(t('forbidden_create_app'));
+            setErrorCode(ResponseCode.FORBIDDEN_CREATE_APP);
+            setIsLoading(false);
+            return;
+          }
+          return toast.warning(error?.message || 'Check Error');
+        }
+      }
+
+      openConfirm(() => {
+        const submitData = data;
+        formHook.setValue('appName', submitData.appName);
+        realTimeForm.current = submitData;
+
+        const parseYamls = formData2Yamls(submitData, config.userDomains, {
+          disableHttps: config.disableHttps
+        });
+        setYamlList(parseYamls);
+
+        track('deployment_create', {
+          module: 'applaunchpad',
+          method: 'custom',
+          config: {
+            template_type: 'public',
+            template_name: submitData.imageName,
+            template_version: submitData.imageName.split(':')?.[1] ?? 'latest'
+          },
+          resources: {
+            cpu_cores: quantityToCpuMillicores(data.cpu) / 1000,
+            ram_mb: quantityToMemoryMi(data.memory),
+            replicas: data.hpa.use ? data.hpa.maxReplicas : Number(data.replicas),
+            scaling: data.hpa.use
+              ? {
+                  method:
+                    submitData.hpa.target === 'cpu'
+                      ? 'CPU'
+                      : submitData.hpa.target === 'gpu'
+                      ? 'GPU'
+                      : 'RAM',
+                  value: submitData.hpa.value
+                }
+              : undefined
+          }
+        });
+        submitSuccess(parseYamls);
+      })();
+    }, submitError)();
+  }, [
+    formHook,
+    countGpuInventory,
+    t,
+    appName,
+    openConfirm,
+    submitSuccess,
+    submitError,
+    setIsLoading,
+    config.userDomains,
+    config.disableHttps
+  ]);
+
+  const handleSubmit = useQuotaGuarded(
+    {
+      requirements: resourceRequirements,
+      immediate: false,
+      allowContinue: false
+    },
+    doSubmit
+  );
+
   return (
     <>
-      <Flex
-        flexDirection={'column'}
-        alignItems={'center'}
-        h={'100%'}
-        minWidth={'1024px'}
-        backgroundColor={'#F7F8FA'}
-      >
+      <div className="h-screen min-w-[1024px] bg-zinc-50 relative flex flex-col overflow-hidden">
         <Header
           appName={formHook.getValues('appName')}
           title={title}
           yamlList={yamlList}
+          getFormData={() => realTimeForm.current}
           applyBtnText={applyBtnText}
-          applyCb={() => formHook.handleSubmit(openConfirm(submitSuccess), submitError)()}
+          applyCb={handleSubmit}
         />
 
-        <Box flex={'1 0 0'} h={0} w={'100%'} pb={4}>
+        <div className="flex-1 overflow-y-auto scrollbar-default flex justify-center pb-20 pt-32">
           {tabType === 'form' ? (
             <Form
               formHook={formHook}
               already={already}
-              defaultStorePathList={defaultStorePathList}
-              pxVal={pxVal}
+              existingStores={existingStores}
+              countGpuInventory={countGpuInventory}
+              refresh={forceUpdate}
+              onDomainVerified={handleDomainVerified}
+              exceededQuotas={exceededQuotas}
             />
           ) : (
             <Yaml yamlList={yamlList} pxVal={pxVal} />
           )}
-        </Box>
-      </Flex>
+        </div>
+      </div>
       <ConfirmChild />
       <Loading />
       {!!errorMessage && (
-        <ErrorModal title={applyError} content={errorMessage} onClose={() => setErrorMessage('')} />
+        <ErrorModal
+          title={applyError}
+          content={errorMessage}
+          onClose={() => setErrorMessage('')}
+          errorCode={errorCode}
+        />
       )}
     </>
   );
 };
 
+export async function getServerSideProps(content: any) {
+  const appName = content?.query?.name || '';
+  const tabType = content?.query?.type || 'form';
+
+  return {
+    props: {
+      appName,
+      tabType,
+      ...(await serviceSideProps(content))
+    }
+  };
+}
+
 export default EditApp;
 
-export async function getServerSideProps(context: any) {
-  const appName = context?.query?.name || '';
-  return {
-    props: { appName }
-  };
+function checkNetworkPorts(networks: AppEditType['networks']) {
+  const portProtocolSet = new Set<string>();
+
+  for (const network of networks) {
+    const { port, protocol } = network;
+    const key = `${port}-${protocol}`;
+    if (portProtocolSet.has(key)) {
+      return false;
+    }
+    portProtocolSet.add(key);
+  }
+
+  return true;
 }

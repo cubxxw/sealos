@@ -8,6 +8,11 @@ export enum APPTYPE {
 }
 
 export type WindowSize = 'maximize' | 'maxmin' | 'minimize';
+export type displayType = 'normal' | 'hidden' | 'more';
+export type TForcedIconStyle = 'contain' | 'fill';
+export type TRepresentativeMeta = {
+  forcedIconStyle: TForcedIconStyle;
+};
 
 export type TAppFront = {
   isShow: boolean;
@@ -23,9 +28,14 @@ export type TAppFront = {
   mouseDowning: boolean;
 };
 
+export type TAppMenuData = {
+  name: string;
+  link: string;
+};
+
 export type TAppConfig = {
   // app key
-  key: string;
+  key: `${'user' | 'system'}-${string}`;
   // app name
   name: string;
   // app icon
@@ -38,14 +48,19 @@ export type TAppConfig = {
     desc: string;
   };
   // app gallery
-  gallery: string[];
+  gallery?: string[];
   extra?: {};
   // app top info
-  menuData?: {
-    nameColor: string;
-    helpDropDown: boolean;
-    helpDocs: boolean | string;
+  menuData?: TAppMenuData[];
+  i18n?: {
+    [key: string]: {
+      name: string;
+    };
   };
+  representativeMeta: TRepresentativeMeta;
+  displayType: displayType;
+  position?: number;
+  creationTimestamp?: string;
 };
 
 export type TApp = TAppConfig & TAppFront & { pid: number };
@@ -56,12 +71,42 @@ export type TOSState = {
   runner: AppStateManager;
   runningInfo: AppInfo[];
   currentAppPid: number;
+  currentAppKey: string;
+  autolaunch: string;
+  autolaunchWorkspaceUid?: string;
+  launchQuery: {
+    raw?: string;
+    pathname?: string;
+  };
+  autoDeployTemplate: string;
+  autoDeployTemplateForm?: Record<string, any>;
+  // store deploy template
+  setAutoLaunch: (
+    autolaunch: string,
+    launchQuery: {
+      raw?: string;
+      pathname?: string;
+    },
+    autolaunchWorkspaceId?: string
+  ) => void;
+  cancelAutoLaunch: () => void;
+  setAutoDeployTemplate: (templateName: string, templateForm: Record<string, any>) => void;
+  cancelAutoDeployTemplate: () => void;
   // init desktop
-  init(): Promise<void>;
+  init(): Promise<TOSState>;
   // open app
-  openApp(app: TApp, query?: Record<string, string>): Promise<void>;
+  openApp(
+    app: TApp,
+    _query?: {
+      query?: Record<string, string>;
+      raw?: string;
+      pathname?: string;
+      appSize?: WindowSize;
+    }
+  ): Promise<void>;
   // close app
   closeAppById: (pid: number) => void;
+  closeAppAll: () => void;
   // get current runningApp
   currentApp: () => AppInfo | undefined;
   switchAppById: (pid: number) => void;
@@ -69,4 +114,11 @@ export type TOSState = {
   setToHighestLayerById: (pid: number) => void;
   updateOpenedAppInfo: (app: TApp) => void;
   deleteLeastUsedAppByIndex: () => void;
+  openDesktopApp: (options: {
+    appKey: string;
+    query?: Record<string, string>;
+    messageData?: Record<string, any>;
+    pathname: string;
+    appSize?: WindowSize;
+  }) => void;
 };

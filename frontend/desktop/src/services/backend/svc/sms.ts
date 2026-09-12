@@ -1,0 +1,48 @@
+import { NextApiResponse } from 'next';
+import { addOrUpdateCode, SmsType } from '../db/verifyCode';
+import { jsonRes } from '../response';
+import { captchaReq, emailSmsReq, smsReq } from '../sms';
+
+export const sendSmsCodeResp =
+  (smsType: SmsType, id: string, code: string) =>
+  async (res: NextApiResponse, next?: () => void) => {
+    const { challengeId } = await addOrUpdateCode({ id, smsType, code });
+    jsonRes(res, {
+      message: 'successfully',
+      data: {
+        challengeId,
+        expiresIn: 300,
+        resendAfter: 60
+      },
+      code: 200
+    });
+    return true;
+  };
+export const sendPhoneCodeSvc =
+  (phone: string, smsType: SmsType) => async (res: NextApiResponse) => {
+    try {
+      const code = await smsReq(phone);
+      return sendSmsCodeResp(smsType, phone, code)(res);
+    } catch (error) {
+      console.error('sendPhoneCodeSvc failed:', error);
+      jsonRes(res, {
+        message: 'SMS sending failed',
+        code: 500
+      });
+      return false;
+    }
+  };
+export const sendEmailCodeSvc =
+  (email: string, smsType: SmsType) => async (res: NextApiResponse) => {
+    try {
+      const code = await emailSmsReq(email);
+      return sendSmsCodeResp(smsType, email, code)(res);
+    } catch (error) {
+      console.error('sendEmailCodeSvc failed:', error);
+      jsonRes(res, {
+        message: 'Email sending failed',
+        code: 500
+      });
+      return false;
+    }
+  };

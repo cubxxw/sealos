@@ -21,8 +21,8 @@ import (
 	"errors"
 
 	"github.com/go-logr/logr"
-	"github.com/labring/endpoints-operator/library/controller"
 	userv1 "github.com/labring/sealos/controllers/user/api/v1"
+	"github.com/labring/sealos/controllers/user/controllers/helper/finalizer"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
@@ -37,12 +37,8 @@ type UserExpirationReconciler struct {
 	config   *rest.Config
 	*runtime.Scheme
 	client.Client
-	finalizer *controller.Finalizer
+	finalizer *finalizer.Finalizer
 }
-
-//+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=core,resources=secrets/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=core,resources=secrets/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -53,14 +49,17 @@ type UserExpirationReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.11.0/pkg/reconcile
-func (r *UserExpirationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *UserExpirationReconciler) Reconcile(
+	ctx context.Context,
+	req ctrl.Request,
+) (ctrl.Result, error) {
 	r.Logger.V(1).Info("start reconcile for users expiration")
 	user := &userv1.User{}
 	if err := r.Get(ctx, req.NamespacedName, user); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if ok, err := r.finalizer.RemoveFinalizer(ctx, user, controller.DefaultFunc); ok {
+	if ok, err := r.finalizer.RemoveFinalizer(ctx, user, finalizer.DefaultFunc); ok {
 		return ctrl.Result{}, err
 	}
 
@@ -84,7 +83,8 @@ func (r *UserExpirationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.Recorder = mgr.GetEventRecorderFor(controllerName)
 	}
 	if r.finalizer == nil {
-		r.finalizer = controller.NewFinalizer(r.Client, "sealos.io/user.expiration.finalizers")
+		r.finalizer = finalizer.NewFinalizer(r.Client, "sealos.io/user.expiration.finalizers").
+			WithReader(mgr.GetAPIReader())
 	}
 	r.Scheme = mgr.GetScheme()
 	r.config = mgr.GetConfig()
@@ -94,7 +94,10 @@ func (r *UserExpirationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *UserExpirationReconciler) reconcile(_ context.Context, _ client.Object) (ctrl.Result, error) {
-	//TODO add  Expiration logic
+func (r *UserExpirationReconciler) reconcile(
+	_ context.Context,
+	_ client.Object,
+) (ctrl.Result, error) {
+	// TODO add  Expiration logic
 	return ctrl.Result{}, nil
 }

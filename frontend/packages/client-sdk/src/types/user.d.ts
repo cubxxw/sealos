@@ -1,0 +1,67 @@
+export type OAuthToken = {
+  readonly access_token: string;
+  readonly token_type: string;
+  readonly refresh_token: string;
+  readonly expiry: string;
+};
+
+export type UserInfo = {
+  readonly k8s_username: string;
+  readonly name: string;
+  readonly avatar: string;
+  readonly nsid: string;
+  readonly ns_uid: string;
+  readonly userId: string;
+};
+
+export type WorkspaceSubscription = {
+  ID: string;
+  PlanName: string;
+  Workspace: string;
+  RegionDomain: string;
+  UserUID: string;
+  Status: string;
+  PayStatus: string;
+  PayMethod: string;
+  Stripe: { subscriptionId: string; customerId: string } | null;
+  TrafficStatus: string;
+  CurrentPeriodStartAt: string;
+  CurrentPeriodEndAt: string;
+  CancelAtPeriodEnd: boolean;
+  CancelAt: string;
+  CreateAt: string;
+  UpdateAt: string;
+  ExpireAt: string | null;
+  Traffic: any[] | null;
+  type: 'SUBSCRIPTION' | 'PAYG';
+};
+
+export type KubeConfig = string;
+
+export type Session = {
+  token: string; // jwt token
+  user: UserInfo;
+  subscription: WorkspaceSubscription;
+  kubeconfig: KubeConfig;
+};
+
+export type UserInfoV1 = Readonly<{
+  id: string;
+  name: string;
+  avatar: string;
+  k8sUsername: string;
+  nsid: string;
+}>;
+
+export type SessionV1 = {
+  token?: string;
+  user: UserInfoV1;
+  subscription: WorkspaceSubscription;
+  kubeconfig: KubeConfig;
+};
+
+export type WorkspaceQuotaItem = {
+  type: 'cpu' | 'memory' | 'storage' | 'pod' | 'gpu' | 'traffic' | 'nodeport';
+  used: number;
+  limit: number;
+};

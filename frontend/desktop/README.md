@@ -12,7 +12,6 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ```c
 .
-├── Dockerfile
 ├── Makefile
 ├── README.md
 ├── deploy
@@ -35,6 +34,7 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 │   │   ├── background
 │   │   ├── desktop_content
 │   │   ├── floating_button
+│   │   ├── LangSelect
 │   │   ├── iconfont
 │   │   ├── layout
 │   │   ├── more_button
@@ -50,15 +50,21 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 │   │   ├── _document.tsx
 │   │   ├── api
 │   │   │   ├── account
+│   │   │   ├── auth
 │   │   │   ├── desktop
-│   │   │   └── notification
+│   │   │   ├── notification
+│   │   │   └── price
 │   │   ├── index.tsx
 │   │   └── login
 │   ├── services
 │   │   ├── backend
 │   │   │   ├── auth.ts
-│   │   │   ├── kubernetes.ts
+│   │   │   ├── oauth.ts
+│   │   │   ├── kubernetes
+│   │   │   │   ├── admin.ts
+│   │   │   │   └── user.ts
 │   │   │   └── response.ts
+│   │   ├── enable.ts
 │   │   └── request.ts
 │   ├── stores
 │   │   ├── app.ts
@@ -73,8 +79,10 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 │   │   ├── crd.ts
 │   │   ├── index.ts
 │   │   ├── payment.ts
+│   │   ├── user.ts
 │   │   └── session.ts
 │   └── utils
+│       ├── crypto.ts
 │       ├── ProcessManager.ts
 │       ├── delay.ts
 │       ├── downloadFIle.ts
@@ -119,8 +127,8 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
     "next-pwa": "^5.6.0",
     "nprogress": "^0.2.0",
     "qrcode.react": "^3.1.0",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "react-draggable": "^4.4.5",
     "react-i18next": "^12.2.0",
     "sass": "^1.62.0",
@@ -146,13 +154,24 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 3. src/layout/index.tsx
 4. src/components/desktop_content.tsx
 
+### 安装 App 数据流
+
+- `src/pages/api/desktop/getInstalledApps.ts` 负责组装桌面可见 App 列表。共享 App 来自 `app-system` namespace 的 `app.sealos.io/v1 App`，workspace App 来自当前 workspace namespace。
+- 共享 App 保持 `displayType` 分组顺序 `normal -> more -> hidden`，组内按 `spec.position` 从小到大排序；没有 `position` 的旧数据按 `0` 处理，再按创建时间倒序和 key 稳定排序。
+- `spec.position` 由管理端共享 App 图标管理写入，集群 App CRD 需要先包含 `spec.position` schema；workspace App 管理不写这个字段。
+
+### 测试环境
+
+1. 需要设置环境变量`NODE_ENV=test` 或者 `$env:NODE_ENV="test"`
+2. 先启动`pnpm dev`, 再启动`pnpm test:w`
+
 ### 其它
 
-1. 获取登录凭证: 由于 login 页面不是在 desktop 项目里，所以需要从线上 sealos 获取登录凭证到本地开发: https://cloud.sealos.io/ 。复制 storage 里的 session 到 localhost 环境实现 mock 登录。
+1. 获取登录凭证: 由于 login 页面不是在 desktop 项目里，所以需要从线上 sealos 获取登录凭证到本地开发: <https://cloud.sealos.io/> 。复制 storage 里的 session 到 localhost 环境实现 mock 登录。
 
-2. Chakra ui https://chakra-ui.com/getting-started
+2. Chakra ui <https://v2.chakra-ui.com/getting-started>
 
-3. TanStack Query 用法：https://cangsdarm.github.io/react-query-web-i18n/react
+3. TanStack Query 用法：<https://cangsdarm.github.io/react-query-web-i18n/react>
 
 4. 使用 vscode 进行单步调试
 
@@ -178,3 +197,76 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
    ```
 
    然后即可点击 vscode 的调试按钮进行调试,同时增加断点
+
+5. 环境变量说明
+
+- 登录功能的开关, 部署时要用`true`配置想要使用的登录方式。
+
+  ```
+  WECHAT_ENABLED=true
+  GITHUB_ENABLED=true
+  PASSWORD_ENABLED=true
+  SMS_ENABLED=true
+  RECHAGRE_ENABLED=true
+  ```
+
+- 每个登陆要配置的变量
+
+  - wechat
+
+    ```
+    WECHAT_CLIENT_ID=
+    WECHAT_CLIENT_SECRET=
+    WECHAT_ENABLED="true"
+    ```
+
+  - github
+
+    ```
+    GITHUB_CLIENT_ID=
+    GITHUB_CLIENT_SECRET=
+    GITHUB_ENABLED="true"
+    ```
+
+  - password
+
+    ```
+    PASSWORD_SALT=
+    PASSWROD_ENABLED="true"
+    ```
+
+  - sms
+
+    ```
+    ALI_ACCESS_KEY_ID=
+    ALI_ACCESS_KEY_SECRET=
+    ALI_SIGN_NAME=
+    ALI_TEMPLATE_CODE=
+    SMS_ENABLED="true"
+    ```
+
+  - google
+
+  ```
+  GOOGLE_ENABLED="true"
+  GOOGLE_CLIENT_ID=
+  GOOGLE_CLIENT_SECRET=
+  ```
+
+  - support standard oauth2
+
+  ```
+  OAUTH2_CLIENT_ID=
+  OAUTH2_CLIENT_SECRET=
+  OAUTH2_AUTH_URL=
+  OAUTH2_TOKEN_URL=
+  OAUTH2_USERINFO_URL=
+  ```
+
+  - number of teams and number of people in each team
+
+  ```
+  // default is '50'
+    TEAM_LIMIT="50"
+    TEAM_INVITE_LIMIT="50"
+  ```

@@ -1,65 +1,66 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { ApiResp } from '@/services/kubernet';
-import { authSession } from '@/services/backend/auth';
-import { getK8s } from '@/services/backend/kubernetes';
 import { jsonRes } from '@/services/backend/response';
-import { pauseKey } from '@/constants/app';
+import { pauseApp, createK8sContext } from '@/services/backend';
+import { withErrorHandler } from '@/services/backend/middleware';
+import { ResponseCode } from '@/types/response';
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
+const sanitizeUrl = (value?: string | string[]) => {
+  const url = Array.isArray(value) ? value[0] : value;
+  if (!url) return undefined;
+
   try {
-    const { appName } = req.query as { appName: string };
-    if (!appName) {
-      throw new Error('appName is empty');
-    }
-    const { apiClient, k8sAutoscaling, getDeployApp, namespace } = await getK8s({
-      kubeconfig: await authSession(req.headers)
-    });
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url.split('?')[0];
+  }
+};
 
-    const app = await getDeployApp(appName);
-    if (!app.metadata?.name || !app?.metadata?.annotations || !app.spec) {
-      throw new Error('app data error');
-    }
+const getRequestSource = (req: NextApiRequest) => ({
+  method: req.method,
+  forwardedFor: req.headers['x-forwarded-for'],
+  realIp: req.headers['x-real-ip'],
+  userAgent: req.headers['user-agent'],
+  referer: sanitizeUrl(req.headers.referer)
+});
 
-    // store restart data
-    const restartAnnotations: Record<string, string> = {
-      target: '',
-      value: ''
-    };
+export default withErrorHandler(async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<ApiResp>
+) {
+  const { appName } = req.query as { appName: string };
 
-    const requestQueue: Promise<any>[] = [];
-
-    // check whether there are hpa
-    try {
-      const { body: hpa } = await k8sAutoscaling.readNamespacedHorizontalPodAutoscaler(
-        appName,
-        namespace
-      );
-
-      restartAnnotations.target = hpa?.spec?.metrics?.[0]?.resource?.name || 'cpu';
-      restartAnnotations.value = `${
-        hpa?.spec?.metrics?.[0]?.resource?.target?.averageUtilization || 50
-      }`;
-
-      requestQueue.push(k8sAutoscaling.deleteNamespacedHorizontalPodAutoscaler(appName, namespace)); // delete HorizontalPodAutoscaler
-    } catch (error: any) {
-      if (error?.statusCode !== 404) {
-        return Promise.reject('无法读取到hpa');
-      }
-    }
-
-    // replace source file
-    app.metadata.annotations[pauseKey] = JSON.stringify(restartAnnotations);
-    app.spec.replicas = 0;
-
-    requestQueue.push(apiClient.replace(app));
-
-    await Promise.all(requestQueue);
-
-    jsonRes(res);
-  } catch (err: any) {
-    jsonRes(res, {
-      code: 500,
-      error: err
+  if (!appName) {
+    return jsonRes(res, {
+      code: ResponseCode.BAD_REQUEST,
+      error: 'App name is required'
     });
   }
-}
+
+  const k8s = await createK8sContext(req);
+  const logPayload = {
+    action: 'pause',
+    appName,
+    namespace: k8s.namespace,
+    user: k8s.kube_user?.name,
+    request: getRequestSource(req)
+  };
+
+  console.info('[applaunchpad app operation] received', logPayload);
+
+  try {
+    await pauseApp(appName, k8s);
+    console.info('[applaunchpad app operation] succeeded', logPayload);
+  } catch (error) {
+    console.error('[applaunchpad app operation] failed', {
+      ...logPayload,
+      error
+    });
+    throw error;
+  }
+
+  jsonRes(res, {
+    message: 'App paused successfully'
+  });
+});

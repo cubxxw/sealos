@@ -1,0 +1,9 @@
+FROM scratch
+
+USER 65532:65532
+
+COPY registry registry
+COPY charts charts
+COPY resources-controller-entrypoint.sh resources-controller-entrypoint.sh
+
+CMD ["bash resources-controller-entrypoint.sh"]

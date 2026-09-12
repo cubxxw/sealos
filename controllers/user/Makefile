@@ -1,8 +1,12 @@
 
 # Image URL to use all building/pushing image targets
-IMG ?=  ghcr.io/labring/sealos-user-controller:dev
+IMG ?= ghcr.io/labring/sealos-user-controller:latest
+TARGETARCH ?= amd64
+LICENSE_KEY ?=
+CONTROLLER_LICENSE_PKG=github.com/labring/sealos/controllers/pkg/license
+
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
-ENVTEST_K8S_VERSION = 1.24.1
+ENVTEST_K8S_VERSION = 1.25.0
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -42,6 +46,7 @@ help: ## Display this help.
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	cp -r config/crd/bases/* deploy/charts/user/crds/
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -56,22 +61,28 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" go test ./... -coverprofile cover.out
+test: envtest ## Run tests.
+	@LD_FLAGS=""; \
+	[ -n "$(LICENSE_KEY)" ] && LD_FLAGS="-X ${CONTROLLER_LICENSE_PKG}.encryptionKey=${LICENSE_KEY}"; \
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" go test -race -ldflags "$${LD_FLAGS}" ./... -count=1
 
 ##@ Build
 
 .PHONY: build
-build:## Build manager binary.
-	CGO_ENABLED=0 go build -o bin/manager main.go
+build:  ## Build manager binary.
+	LD_FLAGS="-s -w"; \
+	[ -n "$(LICENSE_KEY)" ] && LD_FLAGS+=" -X ${CONTROLLER_LICENSE_PKG}.encryptionKey=${LICENSE_KEY}"; \
+	CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags "$${LD_FLAGS}" -trimpath -o bin/manager main.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./main.go
 
 .PHONY: docker-build
-docker-build: test ## Build docker image with the manager.
-	docker build -t ${IMG} .
+docker-build: build ## Build docker image with the manager.
+	mv bin/manager bin/controller-user-${TARGETARCH}
+	chmod +x bin/controller-user-${TARGETARCH}
+	docker build -t ${IMG} . --build-arg TARGETARCH=${TARGETARCH}
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -94,20 +105,17 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build -e SERVICE_NAME=webhook-service -e SERVICE_NAMESPACE=system | kubectl apply -f -
+	$(KUSTOMIZE) build config/default | kubectl apply -f -
 
-.PHONY: deploy
+.PHONY: pre-deploy
 pre-deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 	$(KUSTOMIZE) build config/default  > deploy/manifests/deploy.yaml
 
+
 .PHONY: undeploy
 undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
-
-deploy-crd: manifests
-	kubectl apply -f config/crd/bases
-
 
 ##@ Build Dependencies
 
@@ -122,14 +130,14 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 
 ## Tool Versions
-KUSTOMIZE_VERSION ?= v3.8.7
-CONTROLLER_TOOLS_VERSION ?= v0.10.0
+KUSTOMIZE_VERSION ?= v5.3.0
+CONTROLLER_TOOLS_VERSION ?= v0.14.0
 
 KUSTOMIZE_INSTALL_SCRIPT ?= "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
-	GOBIN=$(LOCALBIN) go install sigs.k8s.io/kustomize/kustomize/v4@latest
+	curl -s $(KUSTOMIZE_INSTALL_SCRIPT) | bash -s -- $(subst v,,$(KUSTOMIZE_VERSION)) $(LOCALBIN)
 
 .PHONY: controller-gen
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.

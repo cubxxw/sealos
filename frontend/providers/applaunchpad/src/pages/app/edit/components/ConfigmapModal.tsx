@@ -1,32 +1,33 @@
 import React, { useMemo } from 'react';
-import {
-  Modal,
-  ModalOverlay,
-  ModalContent,
-  ModalHeader,
-  ModalFooter,
-  ModalBody,
-  ModalCloseButton,
-  Button,
-  FormControl,
-  FormErrorMessage,
-  Box,
-  Textarea,
-  Input
-} from '@chakra-ui/react';
 import { useForm } from 'react-hook-form';
-import MyFormControl from '@/components/FormControl';
+import { useTranslation } from 'next-i18next';
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerFooter
+} from '@sealos/shadcn-ui/drawer';
+import { Button } from '@sealos/shadcn-ui/button';
+import { Input } from '@sealos/shadcn-ui/input';
+import { Textarea } from '@sealos/shadcn-ui/textarea';
+import { Label } from '@sealos/shadcn-ui/label';
+import { Maximize2, Minimize2 } from 'lucide-react';
 
 export type ConfigMapType = {
   id?: string;
   mountPath: string;
   value: string;
+  key: string;
+  volumeName: string;
 };
 
 const ConfigmapModal = ({
   defaultValue = {
     mountPath: '',
-    value: ''
+    value: '',
+    key: '',
+    volumeName: ''
   },
   listNames,
   successCb,
@@ -37,7 +38,9 @@ const ConfigmapModal = ({
   successCb: (e: ConfigMapType) => void;
   closeCb: () => void;
 }) => {
-  const type = useMemo(() => (!!defaultValue.id ? 'create' : 'edit'), [defaultValue]);
+  const { t } = useTranslation();
+  const [isExpanded, setIsExpanded] = React.useState(false);
+  const type = useMemo(() => (!defaultValue.id ? 'create' : 'edit'), [defaultValue]);
   const {
     register,
     handleSubmit,
@@ -47,59 +50,95 @@ const ConfigmapModal = ({
   });
   const textMap = {
     create: {
-      title: '添加ConfigMap'
+      title: 'Add'
     },
     edit: {
-      title: '修改ConfigMap'
+      title: 'Update'
     }
   };
-  console.log(listNames);
-  return (
-    <>
-      <Modal isOpen onClose={closeCb}>
-        <ModalOverlay />
-        <ModalContent maxW={'590px'}>
-          <ModalHeader>{textMap[type].title}</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            <MyFormControl showError errorText={errors.mountPath?.message}>
-              <Box mb={1}>文件名</Box>
-              <Input
-                placeholder="文件名，如 /etc/kubernetes/admin.conf "
-                {...register('mountPath', {
-                  required: '文件名不能为空',
-                  pattern: {
-                    value: /^[0-9a-zA-Z/][0-9a-zA-Z/.-]*[0-9a-zA-Z/]$/,
-                    message: `文件名需满足: [a-z0-9]([-a-z0-9]*[a-z0-9])?`
-                  },
-                  validate: (e) => {
-                    if (listNames.includes(e.toLocaleLowerCase())) {
-                      return '与其他 configMap 路径冲突';
-                    }
-                    return true;
-                  }
-                })}
-              />
-            </MyFormControl>
-            <FormControl isInvalid={!!errors.value}>
-              <Box mb={1}>文件值</Box>
-              <Textarea
-                rows={5}
-                {...register('value', {
-                  required: '文件值不能为空'
-                })}
-              />
-            </FormControl>
-          </ModalBody>
 
-          <ModalFooter>
-            <Button w={'110px'} variant={'primary'} onClick={handleSubmit(successCb)}>
-              确认
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-    </>
+  return (
+    <Drawer open onOpenChange={(open) => !open && closeCb()}>
+      <DrawerContent
+        direction="right"
+        className={
+          isExpanded
+            ? '!w-[calc(100vw-24px)] !max-w-none sm:!max-w-none'
+            : 'min-w-[560px] sm:max-w-[560px]'
+        }
+        onInteractOutside={(e) => e.preventDefault()}
+      >
+        <DrawerHeader className="flex-row items-center justify-between">
+          <DrawerTitle>
+            {t(textMap[type].title)} {t('ConfigMap Tip')}
+          </DrawerTitle>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={isExpanded ? 'Restore drawer size' : 'Expand drawer'}
+            className="mr-8 h-8 w-8 shadow-none"
+            onClick={() => setIsExpanded((value) => !value)}
+          >
+            {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </Button>
+        </DrawerHeader>
+
+        <div className="flex-1 min-h-0 px-6 py-6 flex flex-col gap-4">
+          {/* Mount Path / Filename */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium text-zinc-900">{t('filename')}</Label>
+            <Input
+              className="h-10 bg-white rounded-lg shadow-none"
+              placeholder={`${t('File Name')}: /etc/kubernetes/admin.conf`}
+              {...register('mountPath', {
+                required: t('Filename can not empty') || 'Filename can not empty',
+                pattern: {
+                  value: /^[0-9a-zA-Z_/][0-9a-zA-Z_/.-]*[0-9a-zA-Z_/]$/,
+                  message: t('Mount Path Auth')
+                },
+                validate: (e) => {
+                  if (listNames.includes(e.toLocaleLowerCase())) {
+                    return t('ConfigMap Path Conflict') || 'ConfigMap Path Conflict';
+                  }
+                  return true;
+                }
+              })}
+            />
+            {errors.mountPath && <p className="text-sm text-red-500">{errors.mountPath.message}</p>}
+          </div>
+
+          {/* File Value */}
+          <div className="flex-1 min-h-0 flex flex-col gap-2">
+            <Label className="text-sm font-medium text-zinc-900">{t('file value')}</Label>
+            <Textarea
+              className="resize-none flex-1 min-h-0 max-h-none h-full overflow-y-auto whitespace-pre-wrap font-mono text-sm bg-white shadow-none rounded-lg"
+              {...register('value', {
+                required: t('File Value can not empty') || 'File Value can not empty'
+              })}
+              placeholder={t('File Value Placeholder') || ''}
+            />
+            {errors.value && <p className="text-sm text-red-500">{errors.value.message}</p>}
+          </div>
+        </div>
+
+        <DrawerFooter className="h-auto gap-3">
+          <Button
+            variant="outline"
+            onClick={closeCb}
+            className="h-10 min-w-20 rounded-lg shadow-none hover:bg-zinc-50"
+          >
+            {t('Cancel')}
+          </Button>
+          <Button
+            onClick={handleSubmit(successCb)}
+            className="h-10 min-w-20 rounded-lg shadow-none"
+          >
+            {t('Confirm')}
+          </Button>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
   );
 };
 

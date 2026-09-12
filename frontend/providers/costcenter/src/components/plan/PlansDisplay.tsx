@@ -1,0 +1,270 @@
+import { useState, useEffect, useMemo } from 'react';
+import { Button, Separator } from '@sealos/shadcn-ui';
+import { Checkbox } from '@sealos/shadcn-ui';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@sealos/shadcn-ui';
+import { SubscriptionPlan } from '@/types/plan';
+import { UpgradePlanCard } from './UpgradePlanCard';
+import usePlanStore from '@/stores/plan';
+import { formatMoney, formatTrafficAuto } from '@/utils/format';
+import { useTranslation } from 'next-i18next';
+import CurrencySymbol from '../CurrencySymbol';
+import { openInNewWindow } from '@/utils/windowUtils';
+
+interface PlansDisplayProps {
+  isSubscribing?: boolean;
+  isCreateMode?: boolean;
+  stillChargeByVolume?: boolean;
+  selectedPlanId?: string;
+  onPlanSelect?: (planId: string) => void;
+  workspaceName?: string;
+  onAdditionalPlanSelect?: (planId: string) => void;
+  upgradeButton?: React.ReactNode;
+}
+
+export function PlansDisplay({
+  isSubscribing,
+  isCreateMode = false,
+  stillChargeByVolume = false,
+  selectedPlanId,
+  onPlanSelect,
+  workspaceName,
+  onAdditionalPlanSelect,
+  upgradeButton
+}: PlansDisplayProps) {
+  const { t } = useTranslation();
+  const plansData = usePlanStore((state) => state.plansData);
+  const subscriptionData = usePlanStore((state) => state.subscriptionData);
+  const lastTransactionData = usePlanStore((state) => state.lastTransactionData);
+
+  const plans = useMemo(() => plansData?.plans || [], [plansData]);
+  const subscription = subscriptionData?.subscription;
+  const lastTransaction = lastTransactionData?.transaction;
+  const currentPlan = subscription?.PlanName;
+
+  const [showMorePlans, setShowMorePlans] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<string>(''); // plan id for additional plans
+
+  const { mainPlans, additionalPlans } = useMemo(() => {
+    const paid = plans.filter((plan) => plan.Prices && plan.Prices.length > 0);
+    const main = paid.filter((plan) => !plan.Tags.includes('more'));
+    const additional = paid.filter((plan) => plan.Tags.includes('more'));
+
+    const sortByOrder = (a: SubscriptionPlan, b: SubscriptionPlan) => a.Order - b.Order;
+
+    return {
+      mainPlans: main.sort(sortByOrder),
+      additionalPlans: additional.sort(sortByOrder)
+    };
+  }, [plans]);
+
+  const currentPlanObj = useMemo(() => {
+    return plans.find((plan) => plan.Name === currentPlan);
+  }, [plans, currentPlan]);
+
+  const { nextPlanName, currentPlanInMore } = useMemo(() => {
+    const downgrade = lastTransaction?.Operator === 'downgraded';
+    const nextPlan = downgrade ? lastTransaction?.NewPlanName : null;
+    const planInMore = currentPlanObj && currentPlanObj.Tags.includes('more');
+
+    return {
+      nextPlanName: nextPlan,
+      currentPlanInMore: planInMore
+    };
+  }, [lastTransaction, currentPlanObj]);
+
+  // Set initial state for More Plans checkbox and selection
+  const [hasInitialized, setHasInitialized] = useState(false);
+
+  useEffect(() => {
+    if (!hasInitialized && additionalPlans.length > 0) {
+      let initialPlanId = '';
+      if (currentPlanInMore) {
+        initialPlanId = currentPlanObj?.ID || '';
+        setSelectedPlan(initialPlanId);
+      } else {
+        initialPlanId = additionalPlans[0].ID;
+        setSelectedPlan(initialPlanId);
+      }
+
+      // Notify parent component about initial selection (only in upgrade mode)
+      if (!isCreateMode && initialPlanId) {
+        onAdditionalPlanSelect?.(initialPlanId);
+      }
+
+      if (isCreateMode) {
+        if (currentPlanInMore) {
+          setShowMorePlans(true);
+        }
+      } else {
+        setShowMorePlans(true);
+      }
+
+      setHasInitialized(true);
+    }
+  }, [
+    additionalPlans,
+    currentPlanInMore,
+    currentPlanObj,
+    hasInitialized,
+    isCreateMode,
+    onAdditionalPlanSelect
+  ]);
+
+  // When user selects "charge by volume", uncheck More Plans (only in create mode)
+  useEffect(() => {
+    if (stillChargeByVolume && isCreateMode) {
+      setShowMorePlans(false);
+    }
+  }, [stillChargeByVolume, isCreateMode]);
+
+  return (
+    <div className="pt-6 w-full">
+      {/* Main Plans Grid */}
+      <div
+        className={`flex w-full gap-3 justify-between ${
+          (isCreateMode && showMorePlans) || (isCreateMode && stillChargeByVolume)
+            ? 'opacity-30 pointer-events-none'
+            : ''
+        }`}
+      >
+        {mainPlans.map((plan, index) => (
+          <UpgradePlanCard
+            key={plan.ID}
+            plan={plan}
+            isPopular={index === 1}
+            isLoading={isSubscribing}
+            isCreateMode={isCreateMode}
+            isSelected={isCreateMode && selectedPlanId === plan.ID}
+            onSelect={isCreateMode ? () => onPlanSelect?.(plan.ID) : undefined}
+            workspaceName={workspaceName}
+          />
+        ))}
+      </div>
+
+      {/* More Plans Section */}
+      {additionalPlans.length > 0 && (
+        <div
+          className={`mt-6 flex items-center justify-start gap-4 ${
+            isCreateMode && stillChargeByVolume ? 'opacity-30 pointer-events-none' : ''
+          }`}
+        >
+          {isCreateMode && (
+            <div className="flex items-center space-x-2 flex-shrink-0">
+              <Checkbox
+                id="more-plans"
+                checked={showMorePlans}
+                onCheckedChange={(checked) => {
+                  setShowMorePlans(checked === true);
+                  if (checked && isCreateMode && onPlanSelect && additionalPlans.length > 0) {
+                    const firstMorePlan = additionalPlans[0].ID;
+                    setSelectedPlan(firstMorePlan);
+                    onPlanSelect(firstMorePlan);
+                  } else if (!checked && isCreateMode && onPlanSelect) {
+                    onPlanSelect('');
+                  }
+                }}
+              />
+              <label htmlFor="more-plans" className="text-sm font-medium">
+                {t('common:more_plans')}
+              </label>
+            </div>
+          )}
+
+          <Select
+            value={selectedPlan}
+            onValueChange={(value) => {
+              const currentPlan = additionalPlans.find((p) => p.ID === value);
+              if (currentPlan?.Name === 'Customized' && currentPlan?.Description) {
+                openInNewWindow(currentPlan?.Description);
+              } else {
+                setSelectedPlan(value);
+                if (isCreateMode && onPlanSelect) {
+                  onPlanSelect(value);
+                }
+                // Notify parent component about additional plan selection
+                onAdditionalPlanSelect?.(value);
+              }
+            }}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder={t('common:select_a_plan')} />
+            </SelectTrigger>
+            <SelectContent>
+              {additionalPlans.map((plan) => {
+                const resources = plan.MaxResources;
+                const monthlyPrice = formatMoney(plan.Prices?.[0]?.Price || 0);
+                const isCurrentPlanInSelect = plan.Name === currentPlan;
+                const isNextPlanInSelect = plan.Name === nextPlanName;
+
+                if (plan.Name === 'Customized') {
+                  return (
+                    <SelectItem key={plan.ID} value={plan.ID} className="w-full">
+                      <div className="flex w-full items-center">
+                        <span className="font-medium text-zinc-900 text-sm">{plan.Name}</span>
+                        <Separator
+                          orientation="vertical"
+                          style={{
+                            height: '16px',
+                            margin: '0 12px'
+                          }}
+                        />
+                        <span>{t('common:contact_us')}</span>
+                      </div>
+                    </SelectItem>
+                  );
+                }
+
+                const fmt = (q: { formatForDisplay: (o?: object) => string } | undefined) =>
+                  q ? q.formatForDisplay({ format: 'BinarySI' }) : '';
+                return (
+                  <SelectItem key={plan.ID} value={plan.ID} className="w-full">
+                    <div className="flex w-full items-center">
+                      <span className="font-medium text-zinc-900 text-sm">{plan.Name}</span>
+                      <Separator
+                        orientation="vertical"
+                        style={{
+                          height: '16px',
+                          margin: '0 12px'
+                        }}
+                      />
+                      <div className="text-xs text-gray-500">
+                        {`${fmt(resources.cpu)} vCPU + ${fmt(resources.memory)} RAM + ${fmt(
+                          resources.storage
+                        )} Disk + ${formatTrafficAuto(plan.Traffic)} + ${
+                          resources.nodeports?.toString() ?? ''
+                        } Nodeport + ${formatMoney(plan.AIQuota * 100)} AI Credits`}
+                      </div>
+                      <Separator
+                        orientation="vertical"
+                        style={{
+                          height: '16px',
+                          margin: '0 12px'
+                        }}
+                      />
+                      <span className="text-xs text-gray-500">
+                        <CurrencySymbol />
+                        <span>{monthlyPrice.toFixed(0)}</span>
+                      </span>
+                      {isCurrentPlanInSelect && (
+                        <span className="bg-blue-100 text-blue-600 font-medium text-xs px-2 py-1 rounded-full ml-2">
+                          {t('common:your_current_plan')}
+                        </span>
+                      )}
+                      {isNextPlanInSelect && (
+                        <span className="bg-orange-100 text-orange-600 font-medium text-xs px-2 py-1 rounded-full ml-2">
+                          {t('common:your_next_plan')}
+                        </span>
+                      )}
+                    </div>
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+
+          {!isCreateMode && upgradeButton}
+        </div>
+      )}
+    </div>
+  );
+}

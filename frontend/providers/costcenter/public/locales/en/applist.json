@@ -1,0 +1,15 @@
+{
+  "APP": "App Launchpad",
+  "APP-STORE": "App Store",
+  "All APP": "ALL APP",
+  "CLOUD-VM": "Cloud Server",
+  "DB": "Database",
+  "DB-BACKUP": "Database Backup",
+  "DEV-BOX": "DevBox",
+  "JOB": "CronJob",
+  "LLM-TOKEN": "AI Proxy",
+  "OBJECT-STORAGE": "Object Storage",
+  "OTHER": "Other",
+  "TERMINAL": "Terminal",
+  "all_app_type": "All Apps"
+}

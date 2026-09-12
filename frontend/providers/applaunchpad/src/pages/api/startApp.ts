@@ -1,72 +1,66 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { ApiResp } from '@/services/kubernet';
-import { authSession } from '@/services/backend/auth';
-import { getK8s } from '@/services/backend/kubernetes';
 import { jsonRes } from '@/services/backend/response';
-import { pauseKey, minReplicasKey, maxReplicasKey } from '@/constants/app';
-import { json2HPA } from '@/utils/deployYaml2Json';
-import { AppEditType } from '@/types/app';
+import { startApp, createK8sContext } from '@/services/backend';
+import { withErrorHandler } from '@/services/backend/middleware';
+import { ResponseCode } from '@/types/response';
 
-/* start app. */
-export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResp>) {
+const sanitizeUrl = (value?: string | string[]) => {
+  const url = Array.isArray(value) ? value[0] : value;
+  if (!url) return undefined;
+
   try {
-    const { appName } = req.query as { appName: string };
-    if (!appName) {
-      throw new Error('appName is empty');
-    }
-    const { apiClient, getDeployApp, applyYamlList } = await getK8s({
-      kubeconfig: await authSession(req.headers)
-    });
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url.split('?')[0];
+  }
+};
 
-    const app = await getDeployApp(appName);
+const getRequestSource = (req: NextApiRequest) => ({
+  method: req.method,
+  forwardedFor: req.headers['x-forwarded-for'],
+  realIp: req.headers['x-real-ip'],
+  userAgent: req.headers['user-agent'],
+  referer: sanitizeUrl(req.headers.referer)
+});
 
-    if (!app.metadata?.name || !app?.metadata?.annotations || !app.spec) {
-      throw new Error('app data error');
-    }
+export default withErrorHandler(async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<ApiResp>
+) {
+  const { appName } = req.query as { appName: string };
 
-    if (!app.metadata.annotations[pauseKey]) {
-      throw new Error('app is running');
-    }
-
-    const pauseData: {
-      target: string;
-      value: string;
-    } = JSON.parse(app.metadata.annotations[pauseKey]);
-
-    // replace source file
-    delete app.metadata.annotations[pauseKey];
-    app.spec.replicas = app.metadata.annotations[minReplicasKey]
-      ? +app.metadata.annotations[minReplicasKey]
-      : 1;
-
-    const requestQueue: Promise<any>[] = [apiClient.replace(app)];
-    // create hpa
-    if (pauseData.target) {
-      const hpaYaml = json2HPA({
-        appName,
-        hpa: {
-          use: true,
-          target: pauseData.target,
-          value: pauseData.value,
-          minReplicas: app.metadata.annotations[minReplicasKey]
-            ? app.metadata.annotations[minReplicasKey]
-            : '1',
-          maxReplicas: app.metadata.annotations[maxReplicasKey]
-            ? app.metadata.annotations[maxReplicasKey]
-            : '2'
-        }
-      } as unknown as AppEditType);
-
-      requestQueue.push(applyYamlList([hpaYaml], 'create'));
-    }
-
-    await Promise.all(requestQueue);
-
-    jsonRes(res);
-  } catch (err: any) {
-    jsonRes(res, {
-      code: 500,
-      error: err
+  if (!appName) {
+    return jsonRes(res, {
+      code: ResponseCode.BAD_REQUEST,
+      error: 'App name is required'
     });
   }
-}
+
+  const k8s = await createK8sContext(req);
+  const logPayload = {
+    action: 'start',
+    appName,
+    namespace: k8s.namespace,
+    user: k8s.kube_user?.name,
+    request: getRequestSource(req)
+  };
+
+  console.info('[applaunchpad app operation] received', logPayload);
+
+  try {
+    await startApp(appName, k8s);
+    console.info('[applaunchpad app operation] succeeded', logPayload);
+  } catch (error) {
+    console.error('[applaunchpad app operation] failed', {
+      ...logPayload,
+      error
+    });
+    throw error;
+  }
+
+  jsonRes(res, {
+    message: 'App started successfully'
+  });
+});

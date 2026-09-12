@@ -1,152 +1,340 @@
 name: Build Webhooks image
 
 on:
+  workflow_call:
+    inputs:
+      push_image:
+        description: "Push image"
+        required: false
+        type: boolean
+        default: false
+      push_image_tag:
+        description: "Push image tag"
+        default: "latest"
+        required: false
+        type: string
+      disable_cilint:
+        description: "Disable golangci-lint"
+        default: false
+        required: false
+        type: boolean
   workflow_dispatch:
     inputs:
-      push_mage:
-        description: 'Push images'
+      push_image:
+        description: "Push image"
+        required: false
+        type: boolean
+        default: false
+      push_image_tag:
+        description: "Push image tag"
+        default: "latest"
+        required: false
+        type: string
+      disable_cilint:
+        description: "Disable golangci-lint"
+        default: false
         required: false
         type: boolean
   push:
-    branches: [ "main" ]
+    branches: ["*"]
     paths:
       - "webhooks/**"
       - ".github/workflows/webhooks.yml"
       - "!**/*.md"
       - "!**/*.yaml"
+
   pull_request:
-    branches: [ "*" ]
+    branches: ["*"]
     paths:
       - "webhooks/**"
       - ".github/workflows/webhooks.yml"
       - "!**/*.md"
       - "!**/*.yaml"
+
+# Avoid using ${{ github.workflow }} - when called via workflow_call, it inherits the caller's name causing conflicts
+concurrency:
+  group: webhooks-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 env:
   # Common versions
-  GO_VERSION: "1.20"
+  GO_VERSION: "1.25"
   DEFAULT_OWNER: "labring"
+  ALIYUN_REGISTRY: ${{ secrets.ALIYUN_REGISTRY }}
+  ALIYUN_REPO_PREFIX: ${{ secrets.ALIYUN_REPO_PREFIX && secrets.ALIYUN_REPO_PREFIX || secrets.ALIYUN_USERNAME && format('{0}/{1}', secrets.ALIYUN_REGISTRY, secrets.ALIYUN_USERNAME) || '' }}
 
 jobs:
   resolve-modules:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Resolve Modules
         id: set-matrix
         run: bash ./scripts/resolve-modules.sh ./webhooks
 
   golangci-lint:
-    needs: [ resolve-modules ]
-    runs-on: ubuntu-20.04
+    if: ${{ !inputs.disable_cilint && (github.event_name == 'push' || github.event_name == 'pull_request') }}
+    needs: [resolve-modules]
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix: ${{ fromJson(needs.resolve-modules.outputs.matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Golang with cache
-        uses: magnetikonline/action-golang-cache@v3
+        uses: magnetikonline/action-golang-cache@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update && sudo apt install -y libgpgme-dev libbtrfs-dev libdevmapper-dev
+
+      - name: Run Linter
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+          working-directory: ${{ matrix.workdir }}
+          # args between =, not space
+          args: --color=always --config=${{ github.workspace }}/.golangci.yml
+
+  unit-test:
+    name: Test ${{ matrix.workdir }} with race detector
+    needs: [resolve-modules]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.resolve-modules.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Golang with cache
+        uses: magnetikonline/action-golang-cache@v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Install Dependencies
         run: sudo apt update && sudo apt install -y libgpgme-dev libbtrfs-dev libdevmapper-dev
 
-      - name: Run Linter
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: latest
-          working-directory: ${{ matrix.workdir }}
-          args: "--out-${NO_FUTURE}format colored-line-number"
+      - name: Run Tests with race detector
+        working-directory: ${{ matrix.workdir }}
+        run: make test
 
   image-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
     strategy:
       matrix:
-        module: [ whitelist ]
+        include:
+          - module: admission
+            binary: manager
+            ghcr_repository: sealos-admission-webhook
+          - module: stargz
+            binary: stargz-webhook
+            ghcr_repository: sealos/stargz-webhook
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Setup Golang with cache
-        uses: magnetikonline/action-golang-cache@v3
+        uses: magnetikonline/action-golang-cache@v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Install Dependencies
-        run: sudo apt update && sudo apt install -y libgpgme-dev libbtrfs-dev libdevmapper-dev
-
       - name: Build ${{ matrix.module }} amd64
         working-directory: webhooks/${{ matrix.module }}
+        env:
+          MODULE: ${{ matrix.module }}
+          BINARY: ${{ matrix.binary }}
         run: |
           GOARCH=amd64 make build
-          mv bin/manager bin/webhook-${{ matrix.module }}-amd64
-          chmod +x bin/webhook-${{ matrix.module }}-amd64
+          mv "bin/${BINARY}" "bin/webhook-${MODULE}-amd64"
+          chmod +x "bin/webhook-${MODULE}-amd64"
 
       - name: Build ${{ matrix.module }} arm64
         working-directory: webhooks/${{ matrix.module }}
+        env:
+          MODULE: ${{ matrix.module }}
+          BINARY: ${{ matrix.binary }}
         run: |
           GOARCH=arm64 make build
-          mv bin/manager bin/webhook-${{ matrix.module }}-arm64
-          chmod +x bin/webhook-${{ matrix.module }}-arm64
+          mv "bin/${BINARY}" "bin/webhook-${MODULE}-arm64"
+          chmod +x "bin/webhook-${MODULE}-arm64"
 
-      - name: Prepare
-        id: prepare
+      - name: Set image repo
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+          MODULE_NAME: ${{ matrix.module }}
+          GHCR_REPOSITORY: ${{ matrix.ghcr_repository }}
         run: |
-          TAG=dev
-          echo tag_name=${TAG} >> $GITHUB_OUTPUT
+          echo "GHCR_REPO=ghcr.io/${REPO_OWNER}/${GHCR_REPOSITORY}" >> $GITHUB_ENV
+          if [[ -n "${{ env.ALIYUN_REPO_PREFIX }}" ]]; then
+            echo "ALIYUN_REPO=${{ env.ALIYUN_REPO_PREFIX }}/sealos-${MODULE_NAME}-webhook" >> $GITHUB_ENV
+          fi
 
       - # Add support for more platforms with QEMU (optional)
         # https://github.com/docker/setup-qemu-action
         name: Set up QEMU
         uses: docker/setup-qemu-action@v2
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
         with:
           driver-opts: network=host
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        if: ${{ (github.event_name == 'push') || (inputs.push_mage == true) }}
+        uses: docker/login-action@v3
+        if: ${{ (github.event_name == 'push') ||(github.event_name == 'create') || (inputs.push_image == true)  }}
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GH_PAT }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Login to Aliyun Registry
+        uses: docker/login-action@v3
+        if: ${{ ((github.event_name == 'push') ||(github.event_name == 'create') || (inputs.push_image == true)) && env.ALIYUN_REGISTRY }}
+        with:
+          registry: ${{ env.ALIYUN_REGISTRY }}
+          username: ${{ secrets.ALIYUN_USERNAME }}
+          password: ${{ secrets.ALIYUN_PASSWORD }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.GHCR_REPO }}
+            ${{ env.ALIYUN_REPO }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=raw,value=${{ inputs.push_image_tag }},enable=${{ inputs.push_image_tag != '' && inputs.push_image_tag != 'latest' }}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 9
 
       - name: build (and publish) ${{ matrix.module }} main image
-        if: ${{ (github.event_name == 'push') || (inputs.push_mage == true) }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./webhooks/${{ matrix.module }}
+          file: ./webhooks/${{ matrix.module }}/Dockerfile
+          # Push if it's a push event or if push_image is true
+          push: ${{ (github.event_name == 'push')||(github.event_name == 'create') || (inputs.push_image == true) }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+
+  build-cluster-image:
+    if: ${{ (github.event_name == 'push') ||(github.event_name == 'create') || (inputs.push_image == true)  }}
+    needs:
+      - image-build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        module: [admission]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set image repo
         env:
-          # fork friendly ^^
-          DOCKER_REPO: ghcr.io/${{ github.repository_owner }}/sealos-${{ matrix.module }}-webhook
-        working-directory: webhooks/${{ matrix.module }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          MODULE_NAME: ${{ matrix.module }}
         run: |
-          docker buildx build \
-          --platform linux/amd64,linux/arm64 \
-          --label "org.opencontainers.image.source=https://github.com/${{ github.repository_owner }}/sealos" \
-          --label "org.opencontainers.image.description=sealos-${{ matrix.module }}-webhook container image" \
-          --label "org.opencontainers.image.licenses=MIT" \
-          --push \
-          -t ${DOCKER_REPO}:${{ steps.prepare.outputs.tag_name }} \
-          -f Dockerfile \
-          .
-      - name: build ${{ matrix.module }} image
-        if: ${{ github.event_name == 'pull_request' }}
+          echo "MODULE_NAME=${MODULE_NAME}" >> $GITHUB_ENV
+          echo "OLD_DOCKER_REPO=ghcr.io/labring/sealos-${MODULE_NAME}-webhook" >> $GITHUB_ENV
+          # Docker image repo (always use GHCR for manifests to avoid Aliyun bandwidth costs)
+          echo "GHCR_DOCKER_REPO=ghcr.io/${REPO_OWNER}/sealos-${MODULE_NAME}-webhook" >> $GITHUB_ENV
+          # Cluster image repos
+          echo "GHCR_CLUSTER_REPO=ghcr.io/${REPO_OWNER}/sealos-cloud-${MODULE_NAME}-webhook" >> $GITHUB_ENV
+          if [[ -n "${{ env.ALIYUN_REPO_PREFIX }}" ]]; then
+            echo "ALIYUN_CLUSTER_REPO=${{ env.ALIYUN_REPO_PREFIX }}/sealos-cloud-${MODULE_NAME}-webhook" >> $GITHUB_ENV
+          fi
+
+      - name: Docker meta for cluster image
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.GHCR_CLUSTER_REPO }}
+            ${{ env.ALIYUN_CLUSTER_REPO }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=raw,value=${{ inputs.push_image_tag }},enable=${{ inputs.push_image_tag != '' && inputs.push_image_tag != 'latest' }}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
         env:
-          # fork friendly ^^
-          DOCKER_REPO: ghcr.io/${{ github.repository_owner }}/sealos-${{ matrix.module }}-webhook
-        working-directory: webhooks/${{ matrix.module }}
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 9
+
+      - name: Install sealos
         run: |
-          docker buildx build \
-          --platform linux/amd64,linux/arm64 \
-          --label "org.opencontainers.image.source=https://github.com/${{ github.repository_owner }}/sealos" \
-          --label "org.opencontainers.image.description=sealos-${{ matrix.module }}-webhook container image" \
-          --label "org.opencontainers.image.licenses=MIT" \
-          -t ${DOCKER_REPO}:${{ steps.prepare.outputs.tag_name }} \
-          -f Dockerfile \
-          .
+          sudo bash ./.github/scripts/install.sh
+
+      - name: Build ${{ matrix.module }}-webhook cluster image
+        working-directory: webhooks/${{ matrix.module }}/deploy
+        env:
+          MODULE_NAME: ${{ env.MODULE_NAME }}
+          OLD_DOCKER_REPO: ${{ env.OLD_DOCKER_REPO }}
+          GHCR_DOCKER_REPO: ${{ env.GHCR_DOCKER_REPO }}
+        run: |
+          # Build cluster images for each tag (amd64)
+          for TAG in $DOCKER_METADATA_OUTPUT_TAGS; do
+            # Always use GHCR docker image to avoid Aliyun bandwidth costs
+            IMAGE_TAG="${TAG##*:}"
+            NEW_DOCKER_IMAGE="${GHCR_DOCKER_REPO}:${IMAGE_TAG}"
+            echo "Updating manifests to: ${NEW_DOCKER_IMAGE}"
+            sed -i -E "s;(${OLD_DOCKER_REPO}|${GHCR_DOCKER_REPO}):[^[:space:]\"']*;${NEW_DOCKER_IMAGE};" manifests/*
+            sudo rm -rf registry
+            echo "Building ${TAG}-amd64"
+            sudo sealos build -t "${TAG}-amd64" --platform linux/amd64 -f Kubefile
+          done
+
+          # Build cluster images for each tag (arm64)
+          for TAG in $DOCKER_METADATA_OUTPUT_TAGS; do
+            IMAGE_TAG="${TAG##*:}"
+            NEW_DOCKER_IMAGE="${GHCR_DOCKER_REPO}:${IMAGE_TAG}"
+            sed -i -E "s;(${OLD_DOCKER_REPO}|${GHCR_DOCKER_REPO}):[^[:space:]\"']*;${NEW_DOCKER_IMAGE};" manifests/*
+            sudo rm -rf registry
+            echo "Building ${TAG}-arm64"
+            sudo sealos build -t "${TAG}-arm64" --platform linux/arm64 -f Kubefile
+          done
+
+      - name: Sealos login to ghcr.io
+        env:
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GH_PAT: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          sudo sealos login -u "${REPOSITORY_OWNER}" -p "${GH_PAT}" --debug ghcr.io
+
+      - name: Sealos login to Aliyun Registry
+        if: ${{ env.ALIYUN_REGISTRY }}
+        env:
+          ALIYUN_USERNAME: ${{ secrets.ALIYUN_USERNAME }}
+          ALIYUN_PASSWORD: ${{ secrets.ALIYUN_PASSWORD }}
+        run: |
+          sudo sealos login -u "$ALIYUN_USERNAME" -p "$ALIYUN_PASSWORD" --debug ${{ env.ALIYUN_REGISTRY }}
+
+      - name: Manifest Cluster Images
+        run: |
+          sudo sealos images
+          for TAG in $DOCKER_METADATA_OUTPUT_TAGS; do
+            echo "Creating manifest for ${TAG}"
+            bash scripts/manifest-cluster-images.sh "$TAG"
+          done

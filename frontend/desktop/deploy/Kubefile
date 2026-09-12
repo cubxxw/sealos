@@ -1,10 +1,9 @@
 FROM scratch
+
 USER 65532:65532
 
 COPY registry registry
-COPY manifests manifests
+COPY charts charts
+COPY desktop-frontend-entrypoint.sh desktop-frontend-entrypoint.sh
 
-ENV cloudDomain="cloud.example.com"
-ENV certSecretName="wildcard-cert"
-
-CMD ["kubectl apply -f manifests/deploy.yaml -f manifests/ingress.yaml"]
+CMD ["bash desktop-frontend-entrypoint.sh"]

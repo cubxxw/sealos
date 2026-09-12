@@ -2,10 +2,12 @@ import React from 'react';
 import type { IconProps } from '@chakra-ui/react';
 import { Icon } from '@chakra-ui/react';
 
-const map = {
+export const IconMap = {
   more: require('./icons/more.svg').default,
   store: require('./icons/store.svg').default,
+  storeColor: require('./icons/store-color.svg').default,
   configMap: require('./icons/configMap.svg').default,
+  configMapColor: require('./icons/configMap-color.svg').default,
   podList: require('./icons/podList.svg').default,
   arrowLeft: require('./icons/arrowLeft.svg').default,
   plus: require('./icons/plus.svg').default,
@@ -29,18 +31,68 @@ const map = {
   noEvents: require('./icons/noEvents.svg').default,
   warning: require('./icons/warning.svg').default,
   analyze: require('./icons/analyze.svg').default,
+  gift: require('./icons/gift.svg').default,
   terminal: require('./icons/terminal.svg').default,
-  log: require('./icons/log.svg').default
+  log: require('./icons/log.svg').default,
+  nvidia: require('./icons/gpu/nvidia.svg').default,
+  nvidiaGreen: require('./icons/gpu/nvidia-green.svg').default,
+  enlarge: require('./icons/enlarge.svg').default,
+  file: require('./icons/file.svg').default,
+  rename: require('./icons/rename.svg').default,
+  folder: require('./icons/file/folder.svg').default,
+  folderColor: require('./icons/file/folder-color.svg').default,
+  csv: require('./icons/file/csv.svg').default,
+  csvColor: require('./icons/file/csv-color.svg').default,
+  pdf: require('./icons/file/pdf.svg').default,
+  pdfColor: require('./icons/file/pdf-color.svg').default,
+  png: require('./icons/file/png.svg').default,
+  pngColor: require('./icons/file/png-color.svg').default,
+  txt: require('./icons/file/txt.svg').default,
+  txtColor: require('./icons/file/txt-color.svg').default,
+  html2: require('./icons/file/html2.svg').default,
+  html2Color: require('./icons/file/html2-color.svg').default,
+  upperRight: require('./icons/upperRight.svg').default,
+  target: require('./icons/target.svg').default,
+  yaml: require('./icons/file/yaml.svg').default,
+  yamlColor: require('./icons/file/yaml-color.svg').default,
+  help: require('./icons/help.svg').default,
+  folderLine: require('./icons/file/folder-line.svg').default,
+  default: require('./icons/file/default.svg').default,
+  defaultColor: require('./icons/file/defaul-color.svg').default,
+  home: require('./icons/home.svg').default,
+  upload: require('./icons/upload.svg').default,
+  search: require('./icons/search.svg').default,
+  pods: require('./icons/pods.svg').default,
+  monitor: require('./icons/monitor.svg').default,
+  hardDrive: require('./icons/hardDrive.svg').default,
+  download: require('./icons/download.svg').default,
+  calendar: require('./icons/calendar.svg').default,
+  to: require('./icons/to.svg').default,
+  refresh: require('./icons/refresh.svg').default,
+  container: require('./icons/container.svg').default,
+  arrowRight: require('./icons/arrowRight.svg').default,
+  chart: require('./icons/chart.svg').default,
+  export: require('./icons/export.svg').default,
+  loading: require('./icons/loading.svg').default
 };
+
+export type IconType = keyof typeof IconMap;
 
 const MyIcon = ({
   name,
   w = 'auto',
   h = 'auto',
   ...props
-}: { name: keyof typeof map } & IconProps) => {
-  return map[name] ? (
-    <Icon as={map[name]} verticalAlign={'text-top'} fill={'currentColor'} w={w} h={h} {...props} />
+}: { name: keyof typeof IconMap } & IconProps) => {
+  return IconMap[name] ? (
+    <Icon
+      as={IconMap[name]}
+      verticalAlign={'text-top'}
+      fill={'currentColor'}
+      w={w}
+      h={h}
+      {...props}
+    />
   ) : null;
 };
 

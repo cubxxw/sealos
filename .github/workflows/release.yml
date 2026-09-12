@@ -2,113 +2,64 @@ name: Release
 
 env:
   # Common versions
-  GO_VERSION: "1.20"
+  GO_VERSION: "1.25"
   DEFAULT_OWNER: "labring"
 
 on:
   workflow_dispatch:
-
   push:
     tags:
       - "*"
 
 jobs:
-  workflow-frontend:
-    uses: ./.github/workflows/frontend.yml
-    with:
-      release: true
-  workflow-services:
-    uses: ./.github/workflows/services.yml
-    with:
-      release: true
-  workflow-controllers:
-    uses: ./.github/workflows/controllers.yml
-    with:
-      release: true
-  goreleaser:
-    runs-on: ubuntu-20.04
+  releaser:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Setup Golang with cache
-        uses: magnetikonline/action-golang-cache@v3
+        uses: magnetikonline/action-golang-cache@v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Install Dependencies
         run: |
-          sudo apt update && sudo apt install -y gcc-aarch64-linux-gnu \
+          sudo apt update && sudo apt install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             libbtrfs-dev libgpgme-dev libdevmapper-dev \
             qemu-user-static binfmt-support
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GH_RELEASE_PAT }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v3
+        uses: goreleaser/goreleaser-action@v6
         with:
-          args: release --clean --release-footer-tmpl=scripts/release/footer.md.tmpl --release-header-tmpl=scripts/release/head.md.tmpl
+          args: release --clean --release-notes=../CHANGELOG/CHANGELOG-latest.md
+          workdir: ./lifecycle
         env:
           USERNAME: ${{ github.repository_owner }}
-          GITHUB_TOKEN: ${{ secrets.GH_RELEASE_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FURY_TOKEN: ${{ secrets.FURY_TOKEN }}
 
-  sync:
-    runs-on: ubuntu-20.04
+  cloud-release:
+    uses: ./.github/workflows/cloud-release.yml
     needs:
-      - goreleaser
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-      - name: Fetch Current version
-        id: get-current-tag
-        uses: actions-ecosystem/action-get-latest-tag@v1.6.0
-      - name: Build sealos image
-        if: ${{ github.repository_owner == env.DEFAULT_OWNER }}
-        uses: peter-evans/create-or-update-comment@v1
-        with:
-          issue-number: 251
-          repository: labring-actions/cluster-image
-          body: |
-            /imagebuild_apps sealos ${{steps.get-current-tag.outputs.tag }}
-          token: "${{ secrets.GH_PAT }}"
-  changelog:
-    runs-on: ubuntu-20.04
-    needs:
-      - goreleaser
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-      - name: Fetch Current version
-        id: get-current-tag
-        uses: actions-ecosystem/action-get-latest-tag@v1.6.0
-      - run: git fetch --prune --prune-tags
-      - run: git tag -l 'v*'
-      - name: Generator changelog
-        run: ./scripts/changelog.sh ${{ github.repository }}
-      - uses: peter-evans/create-pull-request@v5
-        with:
-          title: 'docs: Automated Changelog Update for ${{steps.get-current-tag.outputs.tag }}'
-          body: |
-            copilot:all
-            
-            Automated changes by [create-pull-request](https://github.com/peter-evans/create-pull-request) GitHub action
-          commit-message: |
-            🤖 add release changelog using rebot.
-          branch: changelog-${{steps.get-current-tag.outputs.tag }}
-          base: main
-          signoff: true
-          delete-branch: true
-          token: ${{ secrets.GH_RELEASE_PAT }}
-          reviewers: cuisongliu
+      - releaser
+    permissions:
+      contents: write
+      packages: write
+      actions: write
+    secrets: inherit
+    with:
+      tag: ${{ github.ref_name }}
+      build_offline_tar_only: false
